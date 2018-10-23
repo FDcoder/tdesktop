@@ -1,27 +1,15 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include <array>
 #include <memory>
+#include "base/bytes.h"
 
 namespace MTP {
 
@@ -68,20 +56,23 @@ public:
 	void write(QDataStream &to) const {
 		to.writeRawData(reinterpret_cast<const char*>(_key.data()), _key.size());
 	}
+	bytes::const_span data() const {
+		return _key;
+	}
 
 	bool equals(const std::shared_ptr<AuthKey> &other) const {
 		return other ? (_key == other->_key) : false;
 	}
 
-	static void FillData(Data &authKey, base::const_byte_span computedAuthKey) {
+	static void FillData(Data &authKey, bytes::const_span computedAuthKey) {
 		auto computedAuthKeySize = computedAuthKey.size();
-		t_assert(computedAuthKeySize <= kSize);
+		Assert(computedAuthKeySize <= kSize);
 		auto authKeyBytes = gsl::make_span(authKey);
 		if (computedAuthKeySize < kSize) {
-			base::set_bytes(authKeyBytes.subspan(0, kSize - computedAuthKeySize), gsl::byte());
-			base::copy_bytes(authKeyBytes.subspan(kSize - computedAuthKeySize), computedAuthKey);
+			bytes::set_with_const(authKeyBytes.subspan(0, kSize - computedAuthKeySize), gsl::byte());
+			bytes::copy(authKeyBytes.subspan(kSize - computedAuthKeySize), computedAuthKey);
 		} else {
-			base::copy_bytes(authKeyBytes, computedAuthKey);
+			bytes::copy(authKeyBytes, computedAuthKey);
 		}
 	}
 
@@ -158,6 +149,6 @@ struct CTRState {
 	uint32 num = 0;
 	uchar ecount[EcountSize] = { 0 };
 };
-void aesCtrEncrypt(void *data, uint32 len, const void *key, CTRState *state);
+void aesCtrEncrypt(bytes::span data, const void *key, CTRState *state);
 
 } // namespace MTP

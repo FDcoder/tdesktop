@@ -1,63 +1,152 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <rpl/variable.h>
+#include "base/flags.h"
+#include "dialogs/dialogs_key.h"
+
+class MainWidget;
+class HistoryMessage;
+class HistoryService;
+
+namespace Settings {
+enum class Type;
+} // namespace Settings
+
+namespace Media {
+namespace Player {
+class RoundController;
+} // namespace Player
+} // namespace Media
+
+namespace Passport {
+struct FormRequest;
+class FormController;
+} // namespace Passport
+
 namespace Window {
 
-enum class GifPauseReason {
-	Any = 0,
-	InlineResults = (1 << 0),
-	SavedGifs = (1 << 1),
-	Layer = (1 << 2),
-	RoundPlaying = (1 << 3),
-	MediaPreview = (1 << 4),
-};
-Q_DECLARE_FLAGS(GifPauseReasons, GifPauseReason);
-Q_DECLARE_OPERATORS_FOR_FLAGS(GifPauseReasons);
-
+class LayerWidget;
 class MainWindow;
+class SectionMemento;
 
-class Controller {
+enum class GifPauseReason {
+	Any           = 0,
+	InlineResults = (1 << 0),
+	SavedGifs     = (1 << 1),
+	Layer         = (1 << 2),
+	RoundPlaying  = (1 << 3),
+	MediaPreview  = (1 << 4),
+};
+using GifPauseReasons = base::flags<GifPauseReason>;
+inline constexpr bool is_flag_type(GifPauseReason) { return true; };
+
+class DateClickHandler : public ClickHandler {
 public:
-	static constexpr auto kDefaultDialogsWidthRatio = 5. / 14;
+	DateClickHandler(Dialogs::Key chat, QDate date);
 
-	Controller(gsl::not_null<MainWindow*> window) : _window(window) {
+	void setDate(QDate date);
+	void onClick(ClickContext context) const override;
+
+private:
+	Dialogs::Key _chat;
+	QDate _date;
+
+};
+
+struct SectionShow {
+	enum class Way {
+		Forward,
+		Backward,
+		ClearStack,
+	};
+	SectionShow(
+		Way way = Way::Forward,
+		anim::type animated = anim::type::normal,
+		anim::activation activation = anim::activation::normal)
+	: way(way)
+	, animated(animated)
+	, activation(activation) {
+	}
+	SectionShow(
+		anim::type animated,
+		anim::activation activation = anim::activation::normal)
+	: animated(animated)
+	, activation(activation) {
 	}
 
-	gsl::not_null<MainWindow*> window() const {
+	SectionShow withWay(Way newWay) const {
+		return SectionShow(newWay, animated, activation);
+	}
+	SectionShow withThirdColumn() const {
+		auto copy = *this;
+		copy.thirdColumn = true;
+		return copy;
+	}
+
+	Way way = Way::Forward;
+	anim::type animated = anim::type::normal;
+	anim::activation activation = anim::activation::normal;
+	bool thirdColumn = false;
+
+};
+
+class Controller;
+
+class Navigation {
+public:
+	virtual void showSection(
+		SectionMemento &&memento,
+		const SectionShow &params = SectionShow()) = 0;
+	virtual void showBackFromStack(
+		const SectionShow &params = SectionShow()) = 0;
+	virtual not_null<Controller*> parentController() = 0;
+
+	void showPeerInfo(
+		PeerId peerId,
+		const SectionShow &params = SectionShow());
+	void showPeerInfo(
+		not_null<PeerData*> peer,
+		const SectionShow &params = SectionShow());
+	void showPeerInfo(
+		not_null<History*> history,
+		const SectionShow &params = SectionShow());
+
+	void showSettings(
+		Settings::Type type,
+		const SectionShow &params = SectionShow());
+	void showSettings(const SectionShow &params = SectionShow());
+
+	virtual ~Navigation() = default;
+
+};
+
+class Controller : public Navigation {
+public:
+	Controller(not_null<MainWindow*> window);
+
+	not_null<MainWindow*> window() const {
 		return _window;
 	}
 
-	// This is needed for History TopBar updating when searchInPeer
+	// This is needed for History TopBar updating when searchInChat
 	// is changed in the DialogsWidget of the current window.
-	base::Observable<PeerData*> &searchInPeerChanged() {
-		return _searchInPeerChanged;
-	}
+	rpl::variable<Dialogs::Key> searchInChat;
 
-	// This is needed while we have one HistoryWidget and one TopBarWidget
-	// for all histories we show in a window. Once each history is shown
-	// in its own HistoryWidget with its own TopBarWidget this can be removed.
-	base::Observable<PeerData*> &historyPeerChanged() {
-		return _historyPeerChanged;
-	}
+	void setActiveChatEntry(Dialogs::RowDescriptor row);
+	void setActiveChatEntry(Dialogs::Key key);
+	Dialogs::RowDescriptor activeChatEntryCurrent() const;
+	Dialogs::Key activeChatCurrent() const;
+	rpl::producer<Dialogs::RowDescriptor> activeChatEntryChanges() const;
+	rpl::producer<Dialogs::Key> activeChatChanges() const;
+	rpl::producer<Dialogs::RowDescriptor> activeChatEntryValue() const;
+	rpl::producer<Dialogs::Key> activeChatValue() const;
 
 	void enableGifPauseReason(GifPauseReason reason);
 	void disableGifPauseReason(GifPauseReason reason);
@@ -73,21 +162,62 @@ public:
 		int bodyWidth;
 		int dialogsWidth;
 		int chatWidth;
+		int thirdWidth;
 		Adaptive::WindowLayout windowLayout;
 	};
 	ColumnLayout computeColumnLayout() const;
 	int dialogsSmallColumnWidth() const;
-	bool canProvideChatWidth(int requestedWidth) const;
-	void provideChatWidth(int requestedWidth);
+	bool forceWideDialogs() const;
+	void updateColumnLayout();
+	bool canShowThirdSection() const;
+	bool canShowThirdSectionWithoutResize() const;
+	bool takeThirdSectionFromLayer();
+	void resizeForThirdSection();
+	void closeThirdSection();
 
-	void showJumpToDate(gsl::not_null<PeerData*> peer, QDate requestedDate);
+	void showSection(
+		SectionMemento &&memento,
+		const SectionShow &params = SectionShow()) override;
+	void showBackFromStack(
+		const SectionShow &params = SectionShow()) override;
 
-	base::Variable<float64> &dialogsWidthRatio() {
-		return _dialogsWidthRatio;
+	void showPeerHistory(
+		PeerId peerId,
+		const SectionShow &params = SectionShow::Way::ClearStack,
+		MsgId msgId = ShowAtUnreadMsgId);
+	void showPeerHistory(
+		not_null<PeerData*> peer,
+		const SectionShow &params = SectionShow::Way::ClearStack,
+		MsgId msgId = ShowAtUnreadMsgId);
+	void showPeerHistory(
+		not_null<History*> history,
+		const SectionShow &params = SectionShow::Way::ClearStack,
+		MsgId msgId = ShowAtUnreadMsgId);
+
+	void clearSectionStack(
+			const SectionShow &params = SectionShow::Way::ClearStack) {
+		showPeerHistory(
+			PeerId(0),
+			params,
+			ShowAtUnreadMsgId);
 	}
-	const base::Variable<float64> &dialogsWidthRatio() const {
-		return _dialogsWidthRatio;
+
+	void showSpecialLayer(
+		object_ptr<LayerWidget> &&layer,
+		anim::type animated = anim::type::normal);
+	void hideSpecialLayer(
+			anim::type animated = anim::type::normal) {
+		showSpecialLayer(nullptr, animated);
 	}
+	void removeLayerBlackout();
+
+	void showJumpToDate(
+		Dialogs::Key chat,
+		QDate requestedDate);
+
+	void showPassportForm(const Passport::FormRequest &request);
+	void clearPassportForm();
+
 	base::Variable<bool> &dialogsListFocused() {
 		return _dialogsListFocused;
 	}
@@ -101,19 +231,52 @@ public:
 		return _dialogsListDisplayForced;
 	}
 
+	not_null<Controller*> parentController() override {
+		return this;
+	}
+
+	using RoundController = Media::Player::RoundController;
+	bool startRoundVideo(not_null<HistoryItem*> context);
+	RoundController *currentRoundVideo() const;
+	RoundController *roundVideo(not_null<const HistoryItem*> context) const;
+	RoundController *roundVideo(FullMsgId contextId) const;
+	void roundVideoFinished(not_null<RoundController*> video);
+
+	rpl::lifetime &lifetime() {
+		return _lifetime;
+	}
+
+	~Controller();
+
 private:
-	gsl::not_null<MainWindow*> _window;
+	int minimalThreeColumnWidth() const;
+	not_null<MainWidget*> chats() const;
+	int countDialogsWidthFromRatio(int bodyWidth) const;
+	int countThirdColumnWidthFromRatio(int bodyWidth) const;
+	struct ShrinkResult {
+		int dialogsWidth;
+		int thirdWidth;
+	};
+	ShrinkResult shrinkDialogsAndThirdColumns(
+		int dialogsWidth,
+		int thirdWidth,
+		int bodyWidth) const;
 
-	base::Observable<PeerData*> _searchInPeerChanged;
-	base::Observable<PeerData*> _historyPeerChanged;
+	not_null<MainWindow*> _window;
 
-	GifPauseReasons _gifPauseReasons = { 0 };
+	std::unique_ptr<Passport::FormController> _passportForm;
+
+	GifPauseReasons _gifPauseReasons = 0;
 	base::Observable<void> _gifPauseLevelChanged;
 	base::Observable<void> _floatPlayerAreaUpdated;
 
-	base::Variable<float64> _dialogsWidthRatio = { kDefaultDialogsWidthRatio };
+	rpl::variable<Dialogs::RowDescriptor> _activeChatEntry;
 	base::Variable<bool> _dialogsListFocused = { false };
 	base::Variable<bool> _dialogsListDisplayForced = { false };
+
+	std::unique_ptr<RoundController> _roundVideo;
+
+	rpl::lifetime _lifetime;
 
 };
 

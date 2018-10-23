@@ -1,51 +1,38 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include <vector>
 #include <deque>
+#include <rpl/producer.h>
 #include "base/type_traits.h"
 
 namespace base {
 namespace internal {
 
-using ObservableCallHandlers = base::lambda<void()>;
+using ObservableCallHandlers = Fn<void()>;
 void RegisterPendingObservable(ObservableCallHandlers *handlers);
 void UnregisterActiveObservable(ObservableCallHandlers *handlers);
 void UnregisterObservable(ObservableCallHandlers *handlers);
 
 template <typename EventType>
 struct SubscriptionHandlerHelper {
-	using type = base::lambda<void(parameter_type<EventType>)>;
+	using type = Fn<void(parameter_type<EventType>)>;
 };
 
 template <>
 struct SubscriptionHandlerHelper<void> {
-	using type = base::lambda<void()>;
+	using type = Fn<void()>;
 };
 
 template <typename EventType>
 using SubscriptionHandler = typename SubscriptionHandlerHelper<EventType>::type;
 
-// Required because QShared/WeakPointer can't point to void.
 class BaseObservableData {
 };
 
@@ -62,11 +49,11 @@ public:
 	Subscription() = default;
 	Subscription(const Subscription &) = delete;
 	Subscription &operator=(const Subscription &) = delete;
-	Subscription(Subscription &&other) : _node(base::take(other._node)), _removeMethod(other._removeMethod) {
+	Subscription(Subscription &&other) : _node(base::take(other._node)), _removeAndDestroyMethod(other._removeAndDestroyMethod) {
 	}
 	Subscription &operator=(Subscription &&other) {
 		qSwap(_node, other._node);
-		qSwap(_removeMethod, other._removeMethod);
+		qSwap(_removeAndDestroyMethod, other._removeAndDestroyMethod);
 		return *this;
 	}
 	explicit operator bool() const {
@@ -74,9 +61,7 @@ public:
 	}
 	void destroy() {
 		if (_node) {
-			(*_removeMethod)(_node);
-			delete _node;
-			_node = nullptr;
+			(*_removeAndDestroyMethod)(base::take(_node));
 		}
 	}
 	~Subscription() {
@@ -85,18 +70,21 @@ public:
 
 private:
 	struct Node {
-		Node(const QSharedPointer<internal::BaseObservableData> &observable) : observable(observable) {
+		Node(const std::shared_ptr<internal::BaseObservableData> &observable)
+		: observable(observable) {
 		}
 		Node *next = nullptr;
 		Node *prev = nullptr;
-		QWeakPointer<internal::BaseObservableData> observable;
+		std::weak_ptr<internal::BaseObservableData> observable;
 	};
-	using RemoveMethod = void(*)(Node*);
-	Subscription(Node *node, RemoveMethod removeMethod) : _node(node), _removeMethod(removeMethod) {
+	using RemoveAndDestroyMethod = void(*)(Node*);
+	Subscription(Node *node, RemoveAndDestroyMethod removeAndDestroyMethod)
+	: _node(node)
+	, _removeAndDestroyMethod(removeAndDestroyMethod) {
 	}
 
 	Node *_node = nullptr;
-	RemoveMethod _removeMethod;
+	RemoveAndDestroyMethod _removeAndDestroyMethod;
 
 	template <typename EventType, typename Handler>
 	friend class internal::CommonObservableData;
@@ -116,13 +104,13 @@ class CommonObservable {
 public:
 	Subscription add_subscription(Handler &&handler) {
 		if (!_data) {
-			_data = MakeShared<ObservableData<EventType, Handler>>(this);
+			_data = std::make_shared<ObservableData<EventType, Handler>>(this);
 		}
 		return _data->append(std::move(handler));
 	}
 
 private:
-	QSharedPointer<ObservableData<EventType, Handler>> _data;
+	std::shared_ptr<ObservableData<EventType, Handler>> _data;
 
 	friend class CommonObservableData<EventType, Handler>;
 	friend class BaseObservable<EventType, Handler, base::type_traits<EventType>::is_fast_copy_type::value>;
@@ -176,7 +164,7 @@ public:
 		} else {
 			_begin = _end = node;
 		}
-		return { _end, &CommonObservableData::destroyNode };
+		return { _end, &CommonObservableData::removeAndDestroyNode };
 	}
 
 	bool empty() const {
@@ -185,7 +173,11 @@ public:
 
 private:
 	struct Node : public Subscription::Node {
-		Node(const QSharedPointer<BaseObservableData> &observer, Handler &&handler) : Subscription::Node(observer), handler(std::move(handler)) {
+		Node(
+			const std::shared_ptr<BaseObservableData> &observer,
+			Handler &&handler)
+		: Subscription::Node(observer)
+		, handler(std::move(handler)) {
 		}
 		Handler handler;
 	};
@@ -210,10 +202,11 @@ private:
 		}
 	}
 
-	static void destroyNode(Subscription::Node *node) {
-		if (auto that = node->observable.toStrongRef()) {
-			static_cast<CommonObservableData*>(that.data())->remove(node);
+	static void removeAndDestroyNode(Subscription::Node *node) {
+		if (const auto that = node->observable.lock()) {
+			static_cast<CommonObservableData*>(that.get())->remove(node);
 		}
+		delete static_cast<Node*>(node);
 	}
 
 	template <typename CallCurrent>
@@ -367,9 +360,9 @@ class Observable : public internal::BaseObservable<EventType, Handler, base::typ
 public:
 	Observable() = default;
 	Observable(const Observable &other) = delete;
-	Observable(Observable &&other) = delete;
+	Observable(Observable &&other) = default;
 	Observable &operator=(const Observable &other) = delete;
-	Observable &operator=(Observable &&other) = delete;
+	Observable &operator=(Observable &&other) = default;
 
 };
 
@@ -438,7 +431,7 @@ protected:
 	void unsubscribe(int index) {
 		if (!index) return;
 		auto count = static_cast<int>(_subscriptions.size());
-		t_assert(index > 0 && index <= count);
+		Assert(index > 0 && index <= count);
 		_subscriptions[index - 1].destroy();
 		if (index == count) {
 			while (index > 0 && !_subscriptions[--index]) {
@@ -459,6 +452,25 @@ private:
 
 };
 
+void InitObservables(void(*HandleDelayed)());
 void HandleObservables();
+
+template <
+	typename Type,
+	typename = std::enable_if_t<!std::is_same_v<Type, void>>>
+inline auto ObservableViewer(base::Observable<Type> &observable) {
+	return rpl::make_producer<Type>([&observable](
+			const auto &consumer) {
+		auto lifetime = rpl::lifetime();
+		lifetime.make_state<base::Subscription>(
+			observable.add_subscription([consumer](auto &&update) {
+				consumer.put_next_forward(
+					std::forward<decltype(update)>(update));
+			}));
+		return lifetime;
+	});
+}
+
+rpl::producer<> ObservableViewer(base::Observable<void> &observable);
 
 } // namespace base

@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/effects/cross_animation.h"
 
@@ -24,6 +11,7 @@ namespace Ui {
 namespace {
 
 constexpr auto kPointCount = 12;
+constexpr auto kStaticLoadingValue = float64(-666);
 
 //
 //     1         3
@@ -103,7 +91,26 @@ void transformLoadingCross(float64 loading, std::array<QPointF, kPointCount> &po
 
 } // namespace
 
-void CrossAnimation::paint(Painter &p, const style::CrossAnimation &st, style::color color, int x, int y, int outerWidth, float64 shown, float64 loading) {
+void CrossAnimation::paintStaticLoading(
+		Painter &p,
+		const style::CrossAnimation &st,
+		style::color color,
+		int x,
+		int y,
+		int outerWidth,
+		float64 shown) {
+	paint(p, st, color, x, y, outerWidth, shown, kStaticLoadingValue);
+}
+
+void CrossAnimation::paint(
+		Painter &p,
+		const style::CrossAnimation &st,
+		style::color color,
+		int x,
+		int y,
+		int outerWidth,
+		float64 shown,
+		float64 loading) {
 	PainterHighQualityEnabler hq(p);
 
 	auto sqrt2 = sqrt(2.);
@@ -130,7 +137,8 @@ void CrossAnimation::paint(Painter &p, const style::CrossAnimation &st, style::c
 	} };
 	auto pathDeleteSize = kPointCount;
 
-	auto loadingArcLength = 0;
+	const auto staticLoading = (loading == kStaticLoadingValue);
+	auto loadingArcLength = staticLoading ? FullArcLength : 0;
 	if (loading > 0.) {
 		transformLoadingCross(loading, pathDelete, pathDeleteSize);
 
@@ -138,44 +146,50 @@ void CrossAnimation::paint(Painter &p, const style::CrossAnimation &st, style::c
 		loadingArcLength = qRound(-loadingArc * 2 * FullArcLength);
 	}
 
-	if (shown < 1.) {
-		auto alpha = -(shown - 1.) * M_PI_2;
-		auto cosalpha = cos(alpha);
-		auto sinalpha = sin(alpha);
-		auto shiftx = deleteLeft + (deleteWidth / 2.);
-		auto shifty = deleteTop + (deleteHeight / 2.);
-		for (auto &point : pathDelete) {
-			auto x = point.x() - shiftx;
-			auto y = point.y() - shifty;
-			point.setX(shiftx + x * cosalpha - y * sinalpha);
-			point.setY(shifty + y * cosalpha + x * sinalpha);
+	if (!staticLoading) {
+		if (shown < 1.) {
+			auto alpha = -(shown - 1.) * M_PI_2;
+			auto cosalpha = cos(alpha);
+			auto sinalpha = sin(alpha);
+			auto shiftx = deleteLeft + (deleteWidth / 2.);
+			auto shifty = deleteTop + (deleteHeight / 2.);
+			for (auto &point : pathDelete) {
+				auto x = point.x() - shiftx;
+				auto y = point.y() - shifty;
+				point.setX(shiftx + x * cosalpha - y * sinalpha);
+				point.setY(shifty + y * cosalpha + x * sinalpha);
+			}
 		}
+		QPainterPath path;
+		path.moveTo(pathDelete[0]);
+		for (int i = 1; i != pathDeleteSize; ++i) {
+			path.lineTo(pathDelete[i]);
+		}
+		path.lineTo(pathDelete[0]);
+		p.fillPath(path, color);
 	}
-	QPainterPath path;
-	path.moveTo(pathDelete[0]);
-	for (int i = 1; i != pathDeleteSize; ++i) {
-		path.lineTo(pathDelete[i]);
-	}
-	path.lineTo(pathDelete[0]);
-	p.fillPath(path, color);
-
 	if (loadingArcLength != 0) {
-		auto loadingArcStart = FullArcLength / 8;
 		auto roundSkip = (st.size * (1 - sqrt2) + 2 * sqrt2 * deleteSkip + st.stroke) / 2;
 		auto roundPart = QRectF(x + roundSkip, y + roundSkip, st.size - 2 * roundSkip, st.size - 2 * roundSkip);
-		if (shown < 1.) {
-			loadingArcStart -= qRound(-(shown - 1.) * FullArcLength / 4.);
+		if (staticLoading) {
+			anim::DrawStaticLoading(p, roundPart, st.stroke, color);
+		} else {
+			auto loadingArcStart = FullArcLength / 8;
+			if (shown < 1.) {
+				loadingArcStart -= qRound(-(shown - 1.) * FullArcLength / 4.);
+			}
+			if (loadingArcLength < 0) {
+				loadingArcStart += loadingArcLength;
+				loadingArcLength = -loadingArcLength;
+			}
+
+			p.setBrush(Qt::NoBrush);
+			auto pen = color->p;
+			pen.setWidthF(st.stroke);
+			pen.setCapStyle(Qt::RoundCap);
+			p.setPen(pen);
+			p.drawArc(roundPart, loadingArcStart, loadingArcLength);
 		}
-		p.setBrush(Qt::NoBrush);
-		auto pen = color->p;
-		pen.setWidthF(st.stroke);
-		pen.setCapStyle(Qt::RoundCap);
-		p.setPen(pen);
-		if (loadingArcLength < 0) {
-			loadingArcStart += loadingArcLength;
-			loadingArcLength = -loadingArcLength;
-		}
-		p.drawArc(roundPart, loadingArcStart, loadingArcLength);
 	}
 }
 

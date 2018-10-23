@@ -1,27 +1,15 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/themes/window_theme_editor_block.h"
 
 #include "styles/style_window.h"
 #include "ui/effects/ripple_animation.h"
+#include "ui/widgets/shadow.h"
 #include "boxes/edit_color_box.h"
 #include "lang/lang_keys.h"
 
@@ -139,14 +127,14 @@ void EditorBlock::Row::setValue(QColor value) {
 }
 
 void EditorBlock::Row::fillValueString() {
-	auto addHex = [this](int code) {
+	auto addHex = [=](int code) {
 		if (code >= 0 && code < 10) {
 			_valueString.append('0' + code);
 		} else if (code >= 10 && code < 16) {
 			_valueString.append('a' + (code - 10));
 		}
 	};
-	auto addCode = [this, addHex](int code) {
+	auto addCode = [=](int code) {
 		addHex(code / 16);
 		addHex(code % 16);
 	};
@@ -192,7 +180,7 @@ EditorBlock::EditorBlock(QWidget *parent, Type type, Context *context) : TWidget
 			feedDescription(name, added.description);
 
 			auto row = findRow(name);
-			t_assert(row != nullptr);
+			Assert(row != nullptr);
 			auto possibleCopyOf = added.possibleCopyOf;
 			auto copyOf = checkCopyOf(findRowIndex(row), possibleCopyOf) ? possibleCopyOf : QString();
 			removeFromSearch(*row);
@@ -238,7 +226,7 @@ bool EditorBlock::feedCopy(const QString &name, const QString &copyOf) {
 
 void EditorBlock::removeRow(const QString &name, bool removeCopyReferences) {
 	auto it = _indices.find(name);
-	t_assert(it != _indices.cend());
+	Assert(it != _indices.cend());
 
 	auto index = it.value();
 	for (auto i = index + 1, count = static_cast<int>(_data.size()); i != count; ++i) {
@@ -306,10 +294,10 @@ void EditorBlock::activateRow(const Row &row) {
 	} else {
 		_editing = findRowIndex(&row);
 		if (auto box = Ui::show(Box<EditColorBox>(row.name(), row.value()))) {
-			box->setSaveCallback(base::lambda_guarded(this, [this](QColor value) {
+			box->setSaveCallback(crl::guard(this, [this](QColor value) {
 				saveEditing(value);
 			}));
-			box->setCancelCallback(base::lambda_guarded(this, [this] {
+			box->setCancelCallback(crl::guard(this, [this] {
 				cancelEditing();
 			}));
 			_context->box = box;
@@ -322,7 +310,9 @@ void EditorBlock::activateRow(const Row &row) {
 bool EditorBlock::selectSkip(int direction) {
 	_mouseSelection = false;
 
-	auto maxSelected = (isSearch() ? _searchResults.size() : _data.size()) - 1;
+	auto maxSelected = size_type(isSearch()
+		? _searchResults.size()
+		: _data.size()) - 1;
 	auto newSelected = _selected + direction;
 	if (newSelected < -1 || newSelected > maxSelected) {
 		newSelected = maxSelected;
@@ -471,7 +461,7 @@ void EditorBlock::enumerateRowsFrom(int top, Callback callback) const {
 int EditorBlock::resizeGetHeight(int newWidth) {
 	auto result = 0;
 	auto descriptionWidth = newWidth - st::themeEditorMargin.left() - st::themeEditorMargin.right();
-	enumerateRows([this, &result, descriptionWidth](Row &row) {
+	enumerateRows([&](Row &row) {
 		row.setTop(result);
 
 		auto height = row.height();

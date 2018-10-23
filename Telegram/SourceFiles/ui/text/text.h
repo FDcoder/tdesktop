@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -24,7 +11,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 
 #include "core/click_handler.h"
 #include "ui/text/text_entity.h"
-#include "ui/emoji_config.h"
+#include "base/flags.h"
 
 static const QChar TextCommand(0x0010);
 enum TextCommands {
@@ -65,8 +52,8 @@ struct TextSelection {
 	constexpr bool empty() const {
 		return from == to;
 	}
-	uint16 from : 16;
-	uint16 to : 16;
+	uint16 from;
+	uint16 to;
 };
 inline bool operator==(TextSelection a, TextSelection b) {
 	return a.from == b.from && a.to == b.to;
@@ -101,8 +88,8 @@ public:
 	bool hasLinks() const;
 
 	bool hasSkipBlock() const;
-	void setSkipBlock(int32 width, int32 height);
-	void removeSkipBlock();
+	bool updateSkipBlock(int width, int height);
+	bool removeSkipBlock();
 
 	int32 maxWidth() const {
 		return _maxWidth.ceil().toInt();
@@ -128,11 +115,12 @@ public:
 
 	struct StateRequest {
 		enum class Flag {
-			BreakEverywhere = 0x01,
-			LookupSymbol    = 0x02,
-			LookupLink      = 0x04,
+			BreakEverywhere = (1 << 0),
+			LookupSymbol    = (1 << 1),
+			LookupLink      = (1 << 2),
 		};
-		Q_DECLARE_FLAGS(Flags, Flag);
+		using Flags = base::flags<Flag>;
+		friend inline constexpr auto is_flag_type(Flag) { return true; };
 
 		StateRequest() {
 		}
@@ -163,7 +151,7 @@ public:
 		return getStateElided(rtlpoint(point, outerw), width, request);
 	}
 
-	TextSelection adjustSelection(TextSelection selection, TextSelectType selectType) const WARN_UNUSED_RESULT;
+	[[nodiscard]] TextSelection adjustSelection(TextSelection selection, TextSelectType selectType) const;
 	bool isFullSelection(TextSelection selection) const {
 		return (selection.from == 0) && (selection.to >= _text.size());
 	}
@@ -196,6 +184,10 @@ public:
 			_text[j] = QChar(' ');
 		}
 		return true;
+	}
+
+	const style::TextStyle *style() const {
+		return _st;
 	}
 
 	void clear();
@@ -273,9 +265,9 @@ inline bool chIsSpace(QChar ch, bool rich = false) {
 inline bool chIsDiac(QChar ch) { // diac and variation selectors
 	return (ch.category() == QChar::Mark_NonSpacing) || (ch == 1652) || (ch >= 64606 && ch <= 64611);
 }
-inline bool chIsBad(QChar ch) {
-	return (ch == 0) || (ch >= 8232 && ch < 8237) || (ch >= 65024 && ch < 65040 && ch != 65039) || (ch >= 127 && ch < 160 && ch != 156) || (cPlatform() == dbipMac && ch >= 0x0B00 && ch <= 0x0B7F && chIsDiac(ch) && cIsElCapitan()); // tmp hack see https://bugreports.qt.io/browse/QTBUG-48910
-}
+
+bool chIsBad(QChar ch);
+
 inline bool chIsTrimmed(QChar ch, bool rich = false) {
 	return (!rich || ch != TextCommand) && (chIsSpace(ch) || chIsBad(ch));
 }
@@ -383,5 +375,3 @@ inline bool chIsParagraphSeparator(QChar ch) {
 	}
 	return false;
 }
-
-void emojiDraw(QPainter &p, EmojiPtr e, int x, int y);

@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 
 // basic
@@ -255,7 +242,7 @@ emojiPanHeaderFg: windowSubTextFg; // emoji panel section header text
 emojiPanHeaderBg: #fffffff2 | emojiPanBg; // emoji panel section header background
 emojiIconFg: checkboxFg; // emoji category icon
 emojiIconFgActive: windowBgActive; // active emoji category icon
-stickerPanDeleteBg: #000000cc; // delete X button background for custom sent stickers in stickers panel (legacy)
+stickerPanDeleteBg: #000000ff; // delete X button background for custom sent stickers in stickers panel (legacy)
 stickerPanDeleteFg: windowFgActive; // delete X button icon for custom sent stickers in stickers panel (legacy)
 stickerPreviewBg: #ffffffb0; // sticker and GIF preview background (when you press and hold on a sticker)
 
@@ -316,6 +303,7 @@ historyPeer8NameFg: #ce671b; // orange group member name
 historyPeer8NameFgSelected: historyPeer8NameFg; // orange group member name in a selected message
 historyPeer8UserpicBg: #faa774; // orange userpic background
 historyPeerUserpicFg: windowFgActive; // default userpic initials
+historyPeerSavedMessagesBg: historyPeer4UserpicBg; // saved messages userpic background
 
 // Some values are marked as (adjusted), it means they're adjusted by
 // hue and saturation of the average background color if user chooses
@@ -455,6 +443,9 @@ historyReplyCancelFgOver: cancelIconFgOver; // reply / forward / edit message ca
 historyComposeButtonBg: historyComposeAreaBg; // unblock / join channel / mute channel button background
 historyComposeButtonBgOver: windowBgOver; // unblock / join channel / mute channel button background with mouse over
 historyComposeButtonBgRipple: windowBgRipple; // unblock / join channel / mute channel button ripple effect
+
+mapPointDrop: #fd4444; // geo location marker background
+mapPointDot: #ffffff; // geo location marker point
 
 // overview
 overviewCheckBg: #00000040; // shared media / files / links checkbox background for not selected rows when some rows are selected

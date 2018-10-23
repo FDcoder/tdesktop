@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -44,9 +31,9 @@ class ShareBox : public BoxContent, public RPCSender {
 	Q_OBJECT
 
 public:
-	using CopyCallback = base::lambda<void()>;
-	using SubmitCallback = base::lambda<void(const QVector<PeerData*> &)>;
-	using FilterCallback = base::lambda<bool(PeerData*)>;
+	using CopyCallback = Fn<void()>;
+	using SubmitCallback = Fn<void(const QVector<PeerData*> &)>;
+	using FilterCallback = Fn<bool(PeerData*)>;
 	ShareBox(QWidget*, CopyCallback &&copyCallback, SubmitCallback &&submitCallback, FilterCallback &&filterCallback);
 
 protected:
@@ -78,7 +65,9 @@ private:
 	void addPeerToMultiSelect(PeerData *peer, bool skipAnimation = false);
 	void onPeerSelectedChanged(PeerData *peer, bool checked);
 
-	void peopleReceived(const MTPcontacts_Found &result, mtpRequestId requestId);
+	void peopleReceived(
+		const MTPcontacts_Found &result,
+		mtpRequestId requestId);
 	bool peopleFailed(const RPCError &error, mtpRequestId requestId);
 
 	CopyCallback _copyCallback;
@@ -114,18 +103,20 @@ class ShareBox::Inner : public TWidget, public RPCSender, private base::Subscrib
 public:
 	Inner(QWidget *parent, ShareBox::FilterCallback &&filterCallback);
 
-	void setPeerSelectedChangedCallback(base::lambda<void(PeerData *peer, bool selected)> callback);
-	void peerUnselected(PeerData *peer);
+	void setPeerSelectedChangedCallback(Fn<void(PeerData *peer, bool selected)> callback);
+	void peerUnselected(not_null<PeerData*> peer);
 
 	QVector<PeerData*> selected() const;
 	bool hasSelected() const;
 
-	void peopleReceived(const QString &query, const QVector<MTPPeer> &people);
+	void peopleReceived(
+		const QString &query,
+		const QVector<MTPPeer> &my,
+		const QVector<MTPPeer> &people);
 
 	void activateSkipRow(int direction);
 	void activateSkipColumn(int direction);
 	void activateSkipPage(int pageHeight, int direction);
-	void setVisibleTopBottom(int visibleTop, int visibleBottom) override;
 	void updateFilter(QString filter = QString());
 
 	~Inner();
@@ -138,6 +129,10 @@ signals:
 	void searchByUsername();
 
 protected:
+	void visibleTopBottomUpdated(
+		int visibleTop,
+		int visibleBottom) override;
+
 	void paintEvent(QPaintEvent *e) override;
 	void enterEventHook(QEvent *e) override;
 	void leaveEventHook(QEvent *e) override;
@@ -153,18 +148,18 @@ private:
 	int displayedChatsCount() const;
 
 	struct Chat {
-		Chat(PeerData *peer, base::lambda<void()> updateCallback);
+		Chat(PeerData *peer, Fn<void()> updateCallback);
 
 		PeerData *peer;
 		Ui::RoundImageCheckbox checkbox;
 		Text name;
 		Animation nameActive;
 	};
-	void paintChat(Painter &p, TimeMs ms, Chat *chat, int index);
-	void updateChat(PeerData *peer);
-	void updateChatName(Chat *chat, PeerData *peer);
-	void repaintChat(PeerData *peer);
-	int chatIndex(PeerData *peer) const;
+	void paintChat(Painter &p, TimeMs ms, not_null<Chat*> chat, int index);
+	void updateChat(not_null<PeerData*> peer);
+	void updateChatName(not_null<Chat*> chat, not_null<PeerData*> peer);
+	void repaintChat(not_null<PeerData*> peer);
+	int chatIndex(not_null<PeerData*> peer) const;
 	void repaintChatAtIndex(int index);
 	Chat *getChatAtIndex(int index);
 
@@ -174,7 +169,10 @@ private:
 		Default,
 		SkipCallback,
 	};
-	void changePeerCheckState(Chat *chat, bool checked, ChangeStateWay useCallback = ChangeStateWay::Default);
+	void changePeerCheckState(
+		not_null<Chat*> chat,
+		bool checked,
+		ChangeStateWay useCallback = ChangeStateWay::Default);
 
 	Chat *getChat(Dialogs::Row *row);
 	void setActive(int active);
@@ -203,15 +201,13 @@ private:
 	using SelectedChats = OrderedSet<PeerData*>;
 	SelectedChats _selected;
 
-	base::lambda<void(PeerData *peer, bool selected)> _peerSelectedChangedCallback;
+	Fn<void(PeerData *peer, bool selected)> _peerSelectedChangedCallback;
 
 	ChatData *data(Dialogs::Row *row);
 
 	bool _searching = false;
 	QString _lastQuery;
-	using ByUsernameRows = QVector<PeerData*>;
-	using ByUsernameDatas = QVector<Chat*>;
-	ByUsernameRows _byUsernameFiltered;
-	ByUsernameDatas d_byUsernameFiltered;
+	std::vector<PeerData*> _byUsernameFiltered;
+	std::vector<Chat*> d_byUsernameFiltered;
 
 };

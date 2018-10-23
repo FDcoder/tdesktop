@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/style/style_core.h"
 
@@ -60,8 +47,10 @@ void unregisterModule(ModuleBase *module) {
 } // namespace internal
 
 void startManager() {
-	if (cRetina()) {
-		cSetRealScale(dbisOne);
+	if ((cIntRetinaFactor() * cConfigScale() > kInterfaceScaleMax)
+		|| (cIntRetinaFactor() * cRealScale() > kInterfaceScaleMax)) {
+		cSetConfigScale(kInterfaceScaleDefault);
+		cSetRealScale(kInterfaceScaleDefault);
 	}
 
 	internal::registerFontFamily(qsl("Open Sans"));
@@ -78,11 +67,11 @@ void colorizeImage(const QImage &src, QColor c, QImage *outResult, QRect srcRect
 	if (srcRect.isNull()) {
 		srcRect = src.rect();
 	} else {
-		t_assert(src.rect().contains(srcRect));
+		Assert(src.rect().contains(srcRect));
 	}
 	auto width = srcRect.width();
 	auto height = srcRect.height();
-	t_assert(outResult && outResult->rect().contains(QRect(dstPoint, srcRect.size())));
+	Assert(outResult && outResult->rect().contains(QRect(dstPoint, srcRect.size())));
 
 	auto pattern = anim::shifted(c);
 
@@ -91,16 +80,16 @@ void colorizeImage(const QImage &src, QColor c, QImage *outResult, QRect srcRect
 	auto resultIntsPerLine = (outResult->bytesPerLine() >> 2);
 	auto resultIntsAdded = resultIntsPerLine - width * resultIntsPerPixel;
 	auto resultInts = reinterpret_cast<uint32*>(outResult->bits()) + dstPoint.y() * resultIntsPerLine + dstPoint.x() * resultIntsPerPixel;
-	t_assert(resultIntsAdded >= 0);
-	t_assert(outResult->depth() == static_cast<int>((resultIntsPerPixel * sizeof(uint32)) << 3));
-	t_assert(outResult->bytesPerLine() == (resultIntsPerLine << 2));
+	Assert(resultIntsAdded >= 0);
+	Assert(outResult->depth() == static_cast<int>((resultIntsPerPixel * sizeof(uint32)) << 3));
+	Assert(outResult->bytesPerLine() == (resultIntsPerLine << 2));
 
 	auto maskBytesPerPixel = (src.depth() >> 3);
 	auto maskBytesPerLine = src.bytesPerLine();
 	auto maskBytesAdded = maskBytesPerLine - width * maskBytesPerPixel;
 	auto maskBytes = src.constBits() + srcRect.y() * maskBytesPerLine + srcRect.x() * maskBytesPerPixel;
-	t_assert(maskBytesAdded >= 0);
-	t_assert(src.depth() == (maskBytesPerPixel << 3));
+	Assert(maskBytesAdded >= 0);
+	Assert(src.depth() == (maskBytesPerPixel << 3));
 	for (int y = 0; y != height; ++y) {
 		for (int x = 0; x != width; ++x) {
 			auto maskOpacity = static_cast<anim::ShiftedMultiplier>(*maskBytes) + 1;

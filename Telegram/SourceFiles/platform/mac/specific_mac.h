@@ -1,19 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -24,6 +14,8 @@ namespace Platform {
 inline bool TranslucentWindowsSupported(QPoint globalPosition) {
 	return true;
 }
+
+QString CurrentExecutablePath(int argc, char *argv[]);
 
 namespace ThirdParty {
 
@@ -51,7 +43,6 @@ inline void psCheckLocalSocket(const QString &serverName) {
 }
 
 void psWriteDump();
-QString psPrepareCrashDump(const QByteArray &crashdump, QString dumpfile);
 
 void psDeleteDir(const QString &dir);
 
@@ -66,8 +57,6 @@ void psActivateProcess(uint64 pid = 0);
 QString psLocalServerPrefix();
 QString psAppDataPath();
 QString psDownloadPath();
-QString psCurrentExeDirectory(int argc, char *argv[]);
-QString psCurrentExeName(int argc, char *argv[]);
 void psAutoStart(bool start, bool silent = false);
 void psSendToMenu(bool send, bool silent = false);
 
@@ -77,9 +66,6 @@ void psBringToBack(QWidget *w);
 
 int psCleanup();
 int psFixPrevious();
-
-void psExecUpdater();
-void psExecTelegram(const QString &crashreport = QString());
 
 bool psShowOpenWithMenu(int x, int y, const QString &file);
 
@@ -122,5 +108,7 @@ QString strNotificationAboutThemeChange();
 QString strNotificationAboutScreenLocked();
 QString strNotificationAboutScreenUnlocked();
 QString strStyleOfInterface();
+QString strTitleWrapClass();
+QString strTitleClass();
 
 bool psLaunchMaps(const LocationCoords &coords);

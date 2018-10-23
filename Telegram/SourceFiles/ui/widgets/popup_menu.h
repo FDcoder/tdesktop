@@ -1,35 +1,26 @@
 /*
- This file is part of Telegram Desktop,
- the official desktop version of Telegram messaging app, see https://telegram.org
+This file is part of Telegram Desktop,
+the official desktop application for the Telegram messaging service.
 
- Telegram Desktop is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
-
- It is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- GNU General Public License for more details.
-
- Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
- Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
- */
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+*/
 #pragma once
 
 #include "styles/style_widgets.h"
+#include "ui/rp_widget.h"
 #include "ui/widgets/menu.h"
 #include "ui/effects/panel_animation.h"
 
 namespace Ui {
 
-class PopupMenu : public TWidget {
+class PopupMenu : public Ui::RpWidget, private base::Subscriber {
 public:
-	PopupMenu(QWidget*, const style::PopupMenu &st = st::defaultPopupMenu);
-	PopupMenu(QWidget*, QMenu *menu, const style::PopupMenu &st = st::defaultPopupMenu);
+	PopupMenu(QWidget *parent, const style::PopupMenu &st = st::defaultPopupMenu);
+	PopupMenu(QWidget *parent, QMenu *menu, const style::PopupMenu &st = st::defaultPopupMenu);
 
 	QAction *addAction(const QString &text, const QObject *receiver, const char* member, const style::icon *icon = nullptr, const style::icon *iconOver = nullptr);
-	QAction *addAction(const QString &text, base::lambda<void()> callback, const style::icon *icon = nullptr, const style::icon *iconOver = nullptr);
+	QAction *addAction(const QString &text, Fn<void()> callback, const style::icon *icon = nullptr, const style::icon *iconOver = nullptr);
 	QAction *addSeparator();
 	void clearActions();
 
@@ -40,7 +31,7 @@ public:
 	void popup(const QPoint &p);
 	void hideMenu(bool fast = false);
 
-	void setDestroyedCallback(base::lambda<void()> callback) {
+	void setDestroyedCallback(Fn<void()> callback) {
 		_destroyedCallback = std::move(callback);
 	}
 
@@ -134,7 +125,7 @@ private:
 	bool _triggering = false;
 	bool _deleteLater = false;
 
-	base::lambda<void()> _destroyedCallback;
+	Fn<void()> _destroyedCallback;
 
 };
 

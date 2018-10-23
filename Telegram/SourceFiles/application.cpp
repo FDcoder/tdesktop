@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "application.h"
 
@@ -24,12 +11,19 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "mainwidget.h"
 #include "mainwindow.h"
 #include "storage/localstorage.h"
-#include "autoupdater.h"
 #include "window/notifications_manager.h"
+#include "core/crash_reports.h"
 #include "messenger.h"
 #include "base/timer.h"
+#include "base/concurrent_timer.h"
+#include "base/qthelp_url.h"
+#include "base/qthelp_regex.h"
+#include "core/update_checker.h"
+#include "core/crash_report_window.h"
 
 namespace {
+
+constexpr auto kEmptyPidForCommandResponse = 0ULL;
 
 QChar _toHex(ushort v) {
 	v = v & 0x000F;
@@ -71,8 +65,48 @@ QString _escapeFrom7bit(const QString &str) {
 
 } // namespace
 
-Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
-	QByteArray d(QFile::encodeName(QDir(cWorkingDir()).absolutePath()));
+bool InternalPassportLink(const QString &url) {
+	const auto urlTrimmed = url.trimmed();
+	if (!urlTrimmed.startsWith(qstr("tg://"), Qt::CaseInsensitive)) {
+		return false;
+	}
+	const auto command = urlTrimmed.midRef(qstr("tg://").size());
+
+	using namespace qthelp;
+	const auto matchOptions = RegExOption::CaseInsensitive;
+	const auto authMatch = regex_match(
+		qsl("^passport/?\\?(.+)(#|$)"),
+		command,
+		matchOptions);
+	const auto usernameMatch = regex_match(
+		qsl("^resolve/?\\?(.+)(#|$)"),
+		command,
+		matchOptions);
+	const auto usernameValue = usernameMatch->hasMatch()
+		? url_parse_params(
+			usernameMatch->captured(1),
+			UrlParamNameTransform::ToLower).value(qsl("domain"))
+		: QString();
+	const auto authLegacy = (usernameValue == qstr("telegrampassport"));
+	return authMatch->hasMatch() || authLegacy;
+}
+
+bool StartUrlRequiresActivate(const QString &url) {
+	return Messenger::Instance().locked()
+		? true
+		: !InternalPassportLink(url);
+}
+
+Application::Application(
+		not_null<Core::Launcher*> launcher,
+		int &argc,
+		char **argv)
+: QApplication(argc, argv)
+, _launcher(launcher)
+, _updateChecker(Core::UpdaterDisabled()
+	? nullptr
+	: std::make_unique<Core::UpdateChecker>()) {
+	const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
 	char h[33] = { 0 };
 	hashMd5Hex(d.constData(), d.size(), h);
 #ifndef OS_MAC_STORE
@@ -91,13 +125,6 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
 
 	QTimer::singleShot(0, this, SLOT(startApplication()));
 	connect(this, SIGNAL(aboutToQuit()), this, SLOT(closeApplication()));
-
-#ifndef TDESKTOP_DISABLE_AUTOUPDATE
-	_updateCheckTimer.create(this);
-	connect(_updateCheckTimer, SIGNAL(timeout()), this, SLOT(updateCheck()));
-	connect(this, SIGNAL(updateFailed()), this, SLOT(onUpdateFailed()));
-	connect(this, SIGNAL(updateReady()), this, SLOT(onUpdateReady()));
-#endif // !TDESKTOP_DISABLE_AUTOUPDATE
 
 	if (cManyInstance()) {
 		LOG(("Many instance allowed, starting..."));
@@ -128,8 +155,9 @@ void Application::socketConnected() {
 	}
 	if (!cStartUrl().isEmpty()) {
 		commands += qsl("OPEN:") + _escapeTo7bit(cStartUrl()) + ';';
+	} else {
+		commands += qsl("CMD:show;");
 	}
-	commands += qsl("CMD:show;");
 
 	DEBUG_LOG(("Application Info: writing commands %1").arg(commands));
 	_localSocket.write(commands.toLatin1());
@@ -154,7 +182,9 @@ void Application::socketReading() {
 	_localSocketReadData.append(_localSocket.readAll());
 	if (QRegularExpression("RES:(\\d+);").match(_localSocketReadData).hasMatch()) {
 		uint64 pid = _localSocketReadData.mid(4, _localSocketReadData.length() - 5).toULongLong();
-		psActivateProcess(pid);
+		if (pid != kEmptyPidForCommandResponse) {
+			psActivateProcess(pid);
+		}
 		LOG(("Show command response received, pid = %1, activating and quitting...").arg(pid));
 		return App::quit();
 	}
@@ -185,13 +215,13 @@ void Application::socketError(QLocalSocket::LocalSocketError e) {
 	}
 #endif // !Q_OS_WINRT
 
-#ifndef TDESKTOP_DISABLE_AUTOUPDATE
-	if (!cNoStartUpdate() && checkReadyUpdate()) {
+	if (!Core::UpdaterDisabled()
+		&& !cNoStartUpdate()
+		&& Core::checkReadyUpdate()) {
 		cSetRestartingUpdate(true);
 		DEBUG_LOG(("Application Info: installing update instead of starting app..."));
 		return App::quit();
 	}
-#endif // !TDESKTOP_DISABLE_AUTOUPDATE
 
 	singleInstanceChecked();
 }
@@ -202,16 +232,17 @@ void Application::singleInstanceChecked() {
 	}
 
 	Sandbox::start();
+	refreshGlobalProxy();
 
 	if (!Logs::started() || (!cManyInstance() && !Logs::instanceChecked())) {
 		new NotStartedWindow();
 	} else {
-		SignalHandlers::Status status = SignalHandlers::start();
-		if (status == SignalHandlers::CantOpen) {
+		const auto status = CrashReports::Start();
+		if (status == CrashReports::CantOpen) {
 			new NotStartedWindow();
-		} else if (status == SignalHandlers::LastCrashed) {
+		} else if (status == CrashReports::LastCrashed) {
 			if (Sandbox::LastCrashDump().isEmpty()) { // don't handle bad closing for now
-				if (SignalHandlers::restart() == SignalHandlers::CantOpen) {
+				if (CrashReports::Restart() == CrashReports::CantOpen) {
 					new NotStartedWindow();
 				} else {
 					Sandbox::launch();
@@ -254,16 +285,26 @@ void Application::readClients() {
 				QStringRef cmd(&cmds, from, to - from);
 				if (cmd.startsWith(qsl("CMD:"))) {
 					Sandbox::execExternal(cmds.mid(from + 4, to - from - 4));
-					QByteArray response(qsl("RES:%1;").arg(QCoreApplication::applicationPid()).toLatin1());
+					const auto response = qsl("RES:%1;").arg(QCoreApplication::applicationPid()).toLatin1();
 					i->first->write(response.data(), response.size());
 				} else if (cmd.startsWith(qsl("SEND:"))) {
 					if (cSendPaths().isEmpty()) {
 						toSend.append(_escapeFrom7bit(cmds.mid(from + 5, to - from - 5)));
 					}
 				} else if (cmd.startsWith(qsl("OPEN:"))) {
+					auto activateRequired = true;
 					if (cStartUrl().isEmpty()) {
 						startUrl = _escapeFrom7bit(cmds.mid(from + 5, to - from - 5)).mid(0, 8192);
+						activateRequired = StartUrlRequiresActivate(startUrl);
 					}
+					if (activateRequired) {
+						Sandbox::execExternal("show");
+					}
+					const auto responsePid = activateRequired
+						? QCoreApplication::applicationPid()
+						: kEmptyPidForCommandResponse;
+					const auto response = qsl("RES:%1;").arg(responsePid).toLatin1();
+					i->first->write(response.data(), response.size());
 				} else {
 					LOG(("Application Error: unknown command %1 passed in local socket").arg(QString(cmd.constData(), cmd.length())));
 				}
@@ -312,8 +353,29 @@ void Application::startApplication() {
 }
 
 void Application::createMessenger() {
-	t_assert(!App::quitting());
-	_messengerInstance = std::make_unique<Messenger>();
+	Expects(!App::quitting());
+
+	_messengerInstance = std::make_unique<Messenger>(_launcher);
+}
+
+void Application::refreshGlobalProxy() {
+#ifndef TDESKTOP_DISABLE_NETWORK_PROXY
+	const auto proxy = [&] {
+		if (Global::started()) {
+			return Global::UseProxy()
+				? Global::SelectedProxy()
+				: ProxyData();
+		}
+		return Sandbox::PreLaunchProxy();
+	}();
+	if (proxy.type == ProxyData::Type::Socks5
+		|| proxy.type == ProxyData::Type::Http) {
+		QNetworkProxy::setApplicationProxy(
+			ToNetworkProxy(ToDirectIpProxy(proxy)));
+	} else {
+		QNetworkProxyFactory::setUseSystemConfiguration(true);
+	}
+#endif // TDESKTOP_DISABLE_NETWORK_PROXY
 }
 
 void Application::closeApplication() {
@@ -333,169 +395,8 @@ void Application::closeApplication() {
 
 	_localSocket.close();
 
-#ifndef TDESKTOP_DISABLE_AUTOUPDATE
-	delete _updateReply;
-	_updateReply = 0;
-	if (_updateChecker) _updateChecker->deleteLater();
-	_updateChecker = 0;
-	if (_updateThread) {
-		_updateThread->quit();
-	}
-	_updateThread = 0;
-#endif // !TDESKTOP_DISABLE_AUTOUPDATE
+	_updateChecker = nullptr;
 }
-
-#ifndef TDESKTOP_DISABLE_AUTOUPDATE
-void Application::updateCheck() {
-	startUpdateCheck(false);
-}
-
-void Application::updateGotCurrent() {
-	if (!_updateReply || _updateThread) return;
-
-	cSetLastUpdateCheck(unixtime());
-	QRegularExpressionMatch m = QRegularExpression(qsl("^\\s*(\\d+)\\s*:\\s*([\\x21-\\x7f]+)\\s*$")).match(QString::fromLatin1(_updateReply->readAll()));
-	if (m.hasMatch()) {
-		uint64 currentVersion = m.captured(1).toULongLong();
-		QString url = m.captured(2);
-		bool betaVersion = false;
-		if (url.startsWith(qstr("beta_"))) {
-			betaVersion = true;
-			url = url.mid(5) + '_' + countBetaVersionSignature(currentVersion);
-		}
-		if ((!betaVersion || cBetaVersion()) && currentVersion > (betaVersion ? cBetaVersion() : uint64(AppVersion))) {
-			_updateThread = new QThread();
-			connect(_updateThread, SIGNAL(finished()), _updateThread, SLOT(deleteLater()));
-			_updateChecker = new UpdateChecker(_updateThread, url);
-			_updateThread->start();
-		}
-	}
-	if (_updateReply) _updateReply->deleteLater();
-	_updateReply = 0;
-	if (!_updateThread) {
-		QDir updates(cWorkingDir() + "tupdates");
-		if (updates.exists()) {
-			QFileInfoList list = updates.entryInfoList(QDir::Files);
-			for (QFileInfoList::iterator i = list.begin(), e = list.end(); i != e; ++i) {
-                if (QRegularExpression("^(tupdate|tmacupd|tmac32upd|tlinuxupd|tlinux32upd)\\d+(_[a-z\\d]+)?$", QRegularExpression::CaseInsensitiveOption).match(i->fileName()).hasMatch()) {
-					QFile(i->absoluteFilePath()).remove();
-				}
-			}
-		}
-		emit updateLatest();
-	}
-	startUpdateCheck(true);
-	Local::writeSettings();
-}
-
-void Application::updateFailedCurrent(QNetworkReply::NetworkError e) {
-	LOG(("App Error: could not get current version (update check): %1").arg(e));
-	if (_updateReply) _updateReply->deleteLater();
-	_updateReply = 0;
-
-	emit updateFailed();
-	startUpdateCheck(true);
-}
-
-void Application::onUpdateReady() {
-	if (_updateChecker) {
-		_updateChecker->deleteLater();
-		_updateChecker = nullptr;
-	}
-	_updateCheckTimer->stop();
-
-	cSetLastUpdateCheck(unixtime());
-	Local::writeSettings();
-}
-
-void Application::onUpdateFailed() {
-	if (_updateChecker) {
-		_updateChecker->deleteLater();
-		_updateChecker = 0;
-		if (_updateThread) _updateThread->quit();
-		_updateThread = 0;
-	}
-
-	cSetLastUpdateCheck(unixtime());
-	Local::writeSettings();
-}
-
-Application::UpdatingState Application::updatingState() {
-	if (!_updateThread) return Application::UpdatingNone;
-	if (!_updateChecker) return Application::UpdatingReady;
-	return Application::UpdatingDownload;
-}
-
-int32 Application::updatingSize() {
-	if (!_updateChecker) return 0;
-	return _updateChecker->size();
-}
-
-int32 Application::updatingReady() {
-	if (!_updateChecker) return 0;
-	return _updateChecker->ready();
-}
-
-void Application::stopUpdate() {
-	if (_updateReply) {
-		_updateReply->abort();
-		_updateReply->deleteLater();
-		_updateReply = 0;
-	}
-	if (_updateChecker) {
-		_updateChecker->deleteLater();
-		_updateChecker = 0;
-		if (_updateThread) _updateThread->quit();
-		_updateThread = 0;
-	}
-}
-
-void Application::startUpdateCheck(bool forceWait) {
-	if (!Sandbox::started()) return;
-
-	_updateCheckTimer->stop();
-	if (_updateThread || _updateReply || !cAutoUpdate()) return;
-
-	int32 constDelay = cBetaVersion() ? 600 : UpdateDelayConstPart, randDelay = cBetaVersion() ? 300 : UpdateDelayRandPart;
-	int32 updateInSecs = cLastUpdateCheck() + constDelay + int32(rand() % randDelay) - unixtime();
-	bool sendRequest = (updateInSecs <= 0 || updateInSecs > (constDelay + randDelay));
-	if (!sendRequest && !forceWait) {
-		QDir updates(cWorkingDir() + "tupdates");
-		if (updates.exists()) {
-			QFileInfoList list = updates.entryInfoList(QDir::Files);
-			for (QFileInfoList::iterator i = list.begin(), e = list.end(); i != e; ++i) {
-				if (QRegularExpression("^(tupdate|tmacupd|tmac32upd|tlinuxupd|tlinux32upd)\\d+(_[a-z\\d]+)?$", QRegularExpression::CaseInsensitiveOption).match(i->fileName()).hasMatch()) {
-					sendRequest = true;
-				}
-			}
-		}
-	}
-	if (cManyInstance() && !cDebug()) return; // only main instance is updating
-
-	if (sendRequest) {
-		QUrl url(cUpdateURL());
-		if (cBetaVersion()) {
-			url.setQuery(qsl("version=%1&beta=%2").arg(AppVersion).arg(cBetaVersion()));
-		} else if (cAlphaVersion()) {
-			url.setQuery(qsl("version=%1&alpha=1").arg(AppVersion));
-		} else {
-			url.setQuery(qsl("version=%1").arg(AppVersion));
-		}
-		QString u = url.toString();
-		QNetworkRequest checkVersion(url);
-		if (_updateReply) _updateReply->deleteLater();
-
-		App::setProxySettings(_updateManager);
-		_updateReply = _updateManager.get(checkVersion);
-		connect(_updateReply, SIGNAL(finished()), this, SLOT(updateGotCurrent()));
-		connect(_updateReply, SIGNAL(error(QNetworkReply::NetworkError)), this, SLOT(updateFailedCurrent(QNetworkReply::NetworkError)));
-		emit updateChecking();
-	} else {
-		_updateCheckTimer->start((updateInSecs + 5) * 1000);
-	}
-}
-
-#endif // !TDESKTOP_DISABLE_AUTOUPDATE
 
 inline Application *application() {
 	return qobject_cast<Application*>(QApplication::instance());
@@ -546,74 +447,8 @@ void adjustSingleTimers() {
 		a->adjustSingleTimers();
 	}
 	base::Timer::Adjust();
+	base::ConcurrentTimerEnvironment::Adjust();
 }
-
-#ifndef TDESKTOP_DISABLE_AUTOUPDATE
-
-void startUpdateCheck() {
-	if (auto a = application()) {
-		return a->startUpdateCheck(false);
-	}
-}
-
-void stopUpdate() {
-	if (auto a = application()) {
-		return a->stopUpdate();
-	}
-}
-
-Application::UpdatingState updatingState() {
-	if (auto a = application()) {
-		return a->updatingState();
-	}
-	return Application::UpdatingNone;
-}
-
-int32 updatingSize() {
-	if (auto a = application()) {
-		return a->updatingSize();
-	}
-	return 0;
-}
-
-int32 updatingReady() {
-	if (auto a = application()) {
-		return a->updatingReady();
-	}
-	return 0;
-}
-
-void updateChecking() {
-	if (auto a = application()) {
-		emit a->updateChecking();
-	}
-}
-
-void updateLatest() {
-	if (auto a = application()) {
-		emit a->updateLatest();
-	}
-}
-
-void updateProgress(qint64 ready, qint64 total) {
-	if (auto a = application()) {
-		emit a->updateProgress(ready, total);
-	}
-}
-
-void updateFailed() {
-	if (auto a = application()) {
-		emit a->updateFailed();
-	}
-}
-
-void updateReady() {
-	if (auto a = application()) {
-		emit a->updateReady();
-	}
-}
-
-#endif // !TDESKTOP_DISABLE_AUTOUPDATE
 
 void connect(const char *signal, QObject *object, const char *method) {
 	if (auto a = application()) {
@@ -622,17 +457,22 @@ void connect(const char *signal, QObject *object, const char *method) {
 }
 
 void launch() {
-	t_assert(application() != 0);
+	Assert(application() != 0);
 
-	float64 dpi = Application::primaryScreen()->logicalDotsPerInch();
-	if (dpi <= 108) { // 0-96-108
-		cSetScreenScale(dbisOne);
-	} else if (dpi <= 132) { // 108-120-132
-		cSetScreenScale(dbisOneAndQuarter);
-	} else if (dpi <= 168) { // 132-144-168
-		cSetScreenScale(dbisOneAndHalf);
-	} else { // 168-192-inf
-		cSetScreenScale(dbisTwo);
+	const auto dpi = Application::primaryScreen()->logicalDotsPerInch();
+	LOG(("Primary screen DPI: %1").arg(dpi));
+	if (dpi <= 108) {
+		cSetScreenScale(100); // 100%:  96 DPI (0-108)
+	} else if (dpi <= 132) {
+		cSetScreenScale(125); // 125%: 120 DPI (108-132)
+	} else if (dpi <= 168) {
+		cSetScreenScale(150); // 150%: 144 DPI (132-168)
+	} else if (dpi <= 216) {
+		cSetScreenScale(200); // 200%: 192 DPI (168-216)
+	} else if (dpi <= 264) {
+		cSetScreenScale(250); // 250%: 240 DPI (216-264)
+	} else {
+		cSetScreenScale(300); // 300%: 288 DPI (264-inf)
 	}
 
 	auto devicePixelRatio = application()->devicePixelRatio();
@@ -644,14 +484,18 @@ void launch() {
 			LOG(("Environmental variables: QT_AUTO_SCREEN_SCALE_FACTOR='%1'").arg(QString::fromLatin1(qgetenv("QT_AUTO_SCREEN_SCALE_FACTOR"))));
 			LOG(("Environmental variables: QT_SCREEN_SCALE_FACTORS='%1'").arg(QString::fromLatin1(qgetenv("QT_SCREEN_SCALE_FACTORS"))));
 		}
-		cSetRetina(true);
 		cSetRetinaFactor(devicePixelRatio);
 		cSetIntRetinaFactor(int32(cRetinaFactor()));
-		cSetConfigScale(dbisOne);
-		cSetRealScale(dbisOne);
+		cSetScreenScale(kInterfaceScaleDefault);
 	}
 
 	application()->createMessenger();
+}
+
+void refreshGlobalProxy() {
+	if (const auto instance = application()) {
+		instance->refreshGlobalProxy();
+	}
 }
 
 } // namespace Sandbox

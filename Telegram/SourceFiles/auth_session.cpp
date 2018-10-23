@@ -1,35 +1,32 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "auth_session.h"
 
 #include "apiwrap.h"
 #include "messenger.h"
+#include "core/changelogs.h"
 #include "storage/file_download.h"
+#include "storage/file_upload.h"
 #include "storage/localstorage.h"
+#include "storage/storage_facade.h"
 #include "storage/serialize_common.h"
+#include "data/data_session.h"
 #include "window/notifications_manager.h"
+#include "window/themes/window_theme.h"
 #include "platform/platform_specific.h"
 #include "calls/calls_instance.h"
 #include "window/section_widget.h"
 #include "chat_helpers/tabbed_selector.h"
+#include "boxes/send_files_box.h"
+#include "ui/widgets/input_fields.h"
+#include "support/support_common.h"
+#include "support/support_templates.h"
+#include "observer_peer.h"
 
 namespace {
 
@@ -37,27 +34,26 @@ constexpr auto kAutoLockTimeoutLateMs = TimeMs(3000);
 
 } // namespace
 
-AuthSessionData::Variables::Variables()
-: selectorTab(ChatHelpers::SelectorTab::Emoji)
+AuthSessionSettings::Variables::Variables()
+: sendFilesWay(SendFilesWay::Album)
+, selectorTab(ChatHelpers::SelectorTab::Emoji)
 , floatPlayerColumn(Window::Column::Second)
-, floatPlayerCorner(RectPart::TopRight) {
+, floatPlayerCorner(RectPart::TopRight)
+, sendSubmitWay(Ui::InputSubmitSettings::Enter)
+, supportSwitch(Support::SwitchSettings::Next) {
 }
 
-QByteArray AuthSessionData::serialize() const {
-	auto size = sizeof(qint32) * 4;
+QByteArray AuthSessionSettings::serialize() const {
+	auto size = sizeof(qint32) * 10;
 	for (auto i = _variables.soundOverrides.cbegin(), e = _variables.soundOverrides.cend(); i != e; ++i) {
 		size += Serialize::stringSize(i.key()) + Serialize::stringSize(i.value());
 	}
+	size += _variables.groupStickersSectionHidden.size() * sizeof(quint64);
 
 	auto result = QByteArray();
 	result.reserve(size);
 	{
-		QBuffer buffer(&result);
-		if (!buffer.open(QIODevice::WriteOnly)) {
-			Unexpected("Can't open data for AuthSessionData::serialize()");
-		}
-
-		QDataStream stream(&buffer);
+		QDataStream stream(&result, QIODevice::WriteOnly);
 		stream.setVersion(QDataStream::Qt_5_1);
 		stream << static_cast<qint32>(_variables.selectorTab);
 		stream << qint32(_variables.lastSeenWarningSeen ? 1 : 0);
@@ -69,21 +65,34 @@ QByteArray AuthSessionData::serialize() const {
 		stream << qint32(_variables.tabbedSelectorSectionTooltipShown);
 		stream << qint32(_variables.floatPlayerColumn);
 		stream << qint32(_variables.floatPlayerCorner);
+		stream << qint32(_variables.groupStickersSectionHidden.size());
+		for (auto peerId : _variables.groupStickersSectionHidden) {
+			stream << quint64(peerId);
+		}
+		stream << qint32(_variables.thirdSectionInfoEnabled ? 1 : 0);
+		stream << qint32(_variables.smallDialogsList ? 1 : 0);
+		stream << qint32(snap(
+			qRound(_variables.dialogsWidthRatio.current() * 1000000),
+			0,
+			1000000));
+		stream << qint32(_variables.thirdColumnWidth.current());
+		stream << qint32(_variables.thirdSectionExtendedBy);
+		stream << qint32(_variables.sendFilesWay);
+		stream << qint32(_variables.callsPeerToPeer.current());
+		stream << qint32(_variables.sendSubmitWay);
+		stream << qint32(_variables.supportSwitch);
+		stream << qint32(_variables.supportFixChatsOrder ? 1 : 0);
+		stream << qint32(_variables.supportTemplatesAutocomplete ? 1 : 0);
 	}
 	return result;
 }
 
-void AuthSessionData::constructFromSerialized(const QByteArray &serialized) {
+void AuthSessionSettings::constructFromSerialized(const QByteArray &serialized) {
 	if (serialized.isEmpty()) {
 		return;
 	}
 
-	auto readonly = serialized;
-	QBuffer buffer(&readonly);
-	if (!buffer.open(QIODevice::ReadOnly)) {
-		Unexpected("Can't open data for DcOptions::constructFromSerialized()");
-	}
-	QDataStream stream(&buffer);
+	QDataStream stream(serialized);
 	stream.setVersion(QDataStream::Qt_5_1);
 	qint32 selectorTab = static_cast<qint32>(ChatHelpers::SelectorTab::Emoji);
 	qint32 lastSeenWarningSeen = 0;
@@ -92,6 +101,19 @@ void AuthSessionData::constructFromSerialized(const QByteArray &serialized) {
 	qint32 floatPlayerColumn = static_cast<qint32>(Window::Column::Second);
 	qint32 floatPlayerCorner = static_cast<qint32>(RectPart::TopRight);
 	QMap<QString, QString> soundOverrides;
+	base::flat_set<PeerId> groupStickersSectionHidden;
+	qint32 thirdSectionInfoEnabled = 0;
+	qint32 smallDialogsList = 0;
+	float64 dialogsWidthRatio = _variables.dialogsWidthRatio.current();
+	int thirdColumnWidth = _variables.thirdColumnWidth.current();
+	int thirdSectionExtendedBy = _variables.thirdSectionExtendedBy;
+	qint32 sendFilesWay = static_cast<qint32>(_variables.sendFilesWay);
+	qint32 callsPeerToPeer = qint32(_variables.callsPeerToPeer.current());
+	qint32 sendSubmitWay = static_cast<qint32>(_variables.sendSubmitWay);
+	qint32 supportSwitch = static_cast<qint32>(_variables.supportSwitch);
+	qint32 supportFixChatsOrder = _variables.supportFixChatsOrder ? 1 : 0;
+	qint32 supportTemplatesAutocomplete = _variables.supportTemplatesAutocomplete ? 1 : 0;
+
 	stream >> selectorTab;
 	stream >> lastSeenWarningSeen;
 	if (!stream.atEnd()) {
@@ -114,8 +136,49 @@ void AuthSessionData::constructFromSerialized(const QByteArray &serialized) {
 	if (!stream.atEnd()) {
 		stream >> floatPlayerColumn >> floatPlayerCorner;
 	}
+	if (!stream.atEnd()) {
+		auto count = qint32(0);
+		stream >> count;
+		if (stream.status() == QDataStream::Ok) {
+			for (auto i = 0; i != count; ++i) {
+				quint64 peerId;
+				stream >> peerId;
+				groupStickersSectionHidden.insert(peerId);
+			}
+		}
+	}
+	if (!stream.atEnd()) {
+		stream >> thirdSectionInfoEnabled;
+		stream >> smallDialogsList;
+	}
+	if (!stream.atEnd()) {
+		qint32 value = 0;
+		stream >> value;
+		dialogsWidthRatio = snap(value / 1000000., 0., 1.);
+
+		stream >> value;
+		thirdColumnWidth = value;
+
+		stream >> value;
+		thirdSectionExtendedBy = value;
+	}
+	if (!stream.atEnd()) {
+		stream >> sendFilesWay;
+	}
+	if (!stream.atEnd()) {
+		stream >> callsPeerToPeer;
+	}
+	if (!stream.atEnd()) {
+		stream >> sendSubmitWay;
+		stream >> supportSwitch;
+		stream >> supportFixChatsOrder;
+	}
+	if (!stream.atEnd()) {
+		stream >> supportTemplatesAutocomplete;
+	}
 	if (stream.status() != QDataStream::Ok) {
-		LOG(("App Error: Bad data for AuthSessionData::constructFromSerialized()"));
+		LOG(("App Error: "
+			"Bad data for AuthSessionSettings::constructFromSerialized()"));
 		return;
 	}
 
@@ -142,9 +205,83 @@ void AuthSessionData::constructFromSerialized(const QByteArray &serialized) {
 	case RectPart::BottomLeft:
 	case RectPart::BottomRight: _variables.floatPlayerCorner = uncheckedCorner; break;
 	}
+	_variables.groupStickersSectionHidden = std::move(groupStickersSectionHidden);
+	_variables.thirdSectionInfoEnabled = thirdSectionInfoEnabled;
+	_variables.smallDialogsList = smallDialogsList;
+	_variables.dialogsWidthRatio = dialogsWidthRatio;
+	_variables.thirdColumnWidth = thirdColumnWidth;
+	_variables.thirdSectionExtendedBy = thirdSectionExtendedBy;
+	if (_variables.thirdSectionInfoEnabled) {
+		_variables.tabbedSelectorSectionEnabled = false;
+	}
+	auto uncheckedSendFilesWay = static_cast<SendFilesWay>(sendFilesWay);
+	switch (uncheckedSendFilesWay) {
+	case SendFilesWay::Album:
+	case SendFilesWay::Photos:
+	case SendFilesWay::Files: _variables.sendFilesWay = uncheckedSendFilesWay; break;
+	}
+	auto uncheckedCallsPeerToPeer = static_cast<Calls::PeerToPeer>(callsPeerToPeer);
+	switch (uncheckedCallsPeerToPeer) {
+	case Calls::PeerToPeer::DefaultContacts:
+	case Calls::PeerToPeer::DefaultEveryone:
+	case Calls::PeerToPeer::Everyone:
+	case Calls::PeerToPeer::Contacts:
+	case Calls::PeerToPeer::Nobody: _variables.callsPeerToPeer = uncheckedCallsPeerToPeer; break;
+	}
+	auto uncheckedSendSubmitWay = static_cast<Ui::InputSubmitSettings>(
+		sendSubmitWay);
+	switch (uncheckedSendSubmitWay) {
+	case Ui::InputSubmitSettings::Enter:
+	case Ui::InputSubmitSettings::CtrlEnter: _variables.sendSubmitWay = uncheckedSendSubmitWay; break;
+	}
+	auto uncheckedSupportSwitch = static_cast<Support::SwitchSettings>(
+		supportSwitch);
+	switch (uncheckedSupportSwitch) {
+	case Support::SwitchSettings::None:
+	case Support::SwitchSettings::Next:
+	case Support::SwitchSettings::Previous: _variables.supportSwitch = uncheckedSupportSwitch; break;
+	}
+	_variables.supportFixChatsOrder = (supportFixChatsOrder == 1);
+	_variables.supportTemplatesAutocomplete = (supportTemplatesAutocomplete == 1);
 }
 
-QString AuthSessionData::getSoundPath(const QString &key) const {
+void AuthSessionSettings::setTabbedSelectorSectionEnabled(bool enabled) {
+	_variables.tabbedSelectorSectionEnabled = enabled;
+	if (enabled) {
+		setThirdSectionInfoEnabled(false);
+	}
+	setTabbedReplacedWithInfo(false);
+}
+
+rpl::producer<bool> AuthSessionSettings::tabbedReplacedWithInfoValue() const {
+	return _tabbedReplacedWithInfoValue.events_starting_with(
+		tabbedReplacedWithInfo());
+}
+
+void AuthSessionSettings::setThirdSectionInfoEnabled(bool enabled) {
+	if (_variables.thirdSectionInfoEnabled != enabled) {
+		_variables.thirdSectionInfoEnabled = enabled;
+		if (enabled) {
+			setTabbedSelectorSectionEnabled(false);
+		}
+		setTabbedReplacedWithInfo(false);
+		_thirdSectionInfoEnabledValue.fire_copy(enabled);
+	}
+}
+
+rpl::producer<bool> AuthSessionSettings::thirdSectionInfoEnabledValue() const {
+	return _thirdSectionInfoEnabledValue.events_starting_with(
+		thirdSectionInfoEnabled());
+}
+
+void AuthSessionSettings::setTabbedReplacedWithInfo(bool enabled) {
+	if (_tabbedReplacedWithInfo != enabled) {
+		_tabbedReplacedWithInfo = enabled;
+		_tabbedReplacedWithInfoValue.fire_copy(enabled);
+	}
+}
+
+QString AuthSessionSettings::getSoundPath(const QString &key) const {
 	auto it = _variables.soundOverrides.constFind(key);
 	if (it != _variables.soundOverrides.end()) {
 		return it.value();
@@ -152,70 +289,135 @@ QString AuthSessionData::getSoundPath(const QString &key) const {
 	return qsl(":/sounds/") + key + qsl(".mp3");
 }
 
-AuthSession::AuthSession(UserId userId)
-: _userId(userId)
+void AuthSessionSettings::setDialogsWidthRatio(float64 ratio) {
+	_variables.dialogsWidthRatio = ratio;
+}
+
+float64 AuthSessionSettings::dialogsWidthRatio() const {
+	return _variables.dialogsWidthRatio.current();
+}
+
+rpl::producer<float64> AuthSessionSettings::dialogsWidthRatioChanges() const {
+	return _variables.dialogsWidthRatio.changes();
+}
+
+void AuthSessionSettings::setThirdColumnWidth(int width) {
+	_variables.thirdColumnWidth = width;
+}
+
+int AuthSessionSettings::thirdColumnWidth() const {
+	return _variables.thirdColumnWidth.current();
+}
+
+rpl::producer<int> AuthSessionSettings::thirdColumnWidthChanges() const {
+	return _variables.thirdColumnWidth.changes();
+}
+
+AuthSession &Auth() {
+	auto result = Messenger::Instance().authSession();
+	Assert(result != nullptr);
+	return *result;
+}
+
+AuthSession::AuthSession(const MTPUser &user)
+: _user(App::user(user.match([](const auto &data) { return data.vid.v; })))
 , _autoLockTimer([this] { checkAutoLock(); })
 , _api(std::make_unique<ApiWrap>(this))
 , _calls(std::make_unique<Calls::Instance>())
 , _downloader(std::make_unique<Storage::Downloader>())
-, _notifications(std::make_unique<Window::Notifications::System>(this)) {
-	Expects(_userId != 0);
-	_saveDataTimer.setCallback([this] {
+, _uploader(std::make_unique<Storage::Uploader>())
+, _storage(std::make_unique<Storage::Facade>())
+, _notifications(std::make_unique<Window::Notifications::System>(this))
+, _data(std::make_unique<Data::Session>(this))
+, _changelogs(Core::Changelogs::Create(this))
+, _supportTemplates(
+	(Support::ValidateAccount(user)
+		? std::make_unique<Support::Templates>(this)
+		: nullptr)) {
+	App::feedUser(user);
+
+	_saveDataTimer.setCallback([=] {
 		Local::writeUserSettings();
 	});
-	subscribe(Messenger::Instance().passcodedChanged(), [this] {
+	Messenger::Instance().passcodeLockChanges(
+	) | rpl::start_with_next([=] {
 		_shouldLockAt = 0;
+	}, _lifetime);
+	Messenger::Instance().lockChanges(
+	) | rpl::start_with_next([=] {
 		notifications().updateAll();
+	}, _lifetime);
+	subscribe(Global::RefConnectionTypeChanged(), [=] {
+		_api->refreshProxyPromotion();
 	});
-	_api->start();
+	_api->refreshProxyPromotion();
+	_api->requestTermsUpdate();
+	_api->requestFullPeer(_user);
+
+	crl::on_main(this, [=] {
+		using Flag = Notify::PeerUpdate::Flag;
+		const auto events = Flag::NameChanged
+			| Flag::UsernameChanged
+			| Flag::PhotoChanged
+			| Flag::AboutChanged
+			| Flag::UserPhoneChanged;
+		subscribe(
+			Notify::PeerUpdated(),
+			Notify::PeerUpdatedHandler(
+				events,
+				[=](const Notify::PeerUpdate &update) {
+					if (update.peer == _user) {
+						Local::writeSelf();
+					}
+				}));
+	});
+
+	Window::Theme::Background()->start();
 }
 
 bool AuthSession::Exists() {
-	if (auto messenger = Messenger::InstancePointer()) {
+	if (const auto messenger = Messenger::InstancePointer()) {
 		return (messenger->authSession() != nullptr);
 	}
 	return false;
 }
 
-AuthSession &AuthSession::Current() {
-	auto result = Messenger::Instance().authSession();
-	t_assert(result != nullptr);
-	return *result;
-}
-
-UserData *AuthSession::CurrentUser() {
-	return App::user(CurrentUserId());
-}
-
-base::Observable<void> &AuthSession::CurrentDownloaderTaskFinished() {
-	return Current().downloader().taskFinished();
+base::Observable<void> &AuthSession::downloaderTaskFinished() {
+	return downloader().taskFinished();
 }
 
 bool AuthSession::validateSelf(const MTPUser &user) {
-	if (user.type() != mtpc_user || !user.c_user().is_self() || user.c_user().vid.v != userId()) {
+	if (user.type() != mtpc_user || !user.c_user().is_self()) {
+		LOG(("API Error: bad self user received."));
+		return false;
+	} else if (user.c_user().vid.v != userId()) {
 		LOG(("Auth Error: wrong self user received."));
-		App::logOutDelayed();
+		crl::on_main(this, [] { Messenger::Instance().logOut(); });
 		return false;
 	}
 	return true;
 }
 
-void AuthSession::saveDataDelayed(TimeMs delay) {
-	Expects(this == &AuthSession::Current());
+void AuthSession::saveSettingsDelayed(TimeMs delay) {
+	Expects(this == &Auth());
+
 	_saveDataTimer.callOnce(delay);
 }
 
 void AuthSession::checkAutoLock() {
-	if (!Global::LocalPasscode() || App::passcoded()) return;
+	if (!Global::LocalPasscode()
+		|| Messenger::Instance().passcodeLocked()) {
+		return;
+	}
 
 	Messenger::Instance().checkLocalTime();
 	auto now = getms(true);
 	auto shouldLockInMs = Global::AutoLock() * 1000LL;
 	auto idleForMs = psIdleTime();
-	auto notPlayingVideoForMs = now - data().lastTimeVideoPlayedAt();
+	auto notPlayingVideoForMs = now - settings().lastTimeVideoPlayedAt();
 	auto checkTimeMs = qMin(idleForMs, notPlayingVideoForMs);
 	if (checkTimeMs >= shouldLockInMs || (_shouldLockAt > 0 && now > _shouldLockAt + kAutoLockTimeoutLateMs)) {
-		Messenger::Instance().setupPasscode();
+		Messenger::Instance().lockByPasscode();
 	} else {
 		_shouldLockAt = now + (shouldLockInMs - checkTimeMs);
 		_autoLockTimer.callOnce(shouldLockInMs - checkTimeMs);
@@ -228,6 +430,16 @@ void AuthSession::checkAutoLockIn(TimeMs time) {
 		if (remain > 0 && remain <= time) return;
 	}
 	_autoLockTimer.callOnce(time);
+}
+
+bool AuthSession::supportMode() const {
+	return (_supportTemplates != nullptr);
+}
+
+not_null<Support::Templates*> AuthSession::supportTemplates() const {
+	Expects(supportMode());
+
+	return _supportTemplates.get();
 }
 
 AuthSession::~AuthSession() = default;

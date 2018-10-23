@@ -1,26 +1,14 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include "boxes/abstract_box.h"
+#include "base/timer.h"
 #include "ui/widgets/input_fields.h"
 
 namespace Ui {
@@ -30,15 +18,15 @@ class FlatLabel;
 
 class SentCodeField : public Ui::InputField {
 public:
-	SentCodeField(QWidget *parent, const style::InputField &st, base::lambda<QString()> placeholderFactory = base::lambda<QString()>(), const QString &val = QString()) : Ui::InputField(parent, st, std::move(placeholderFactory), val) {
+	SentCodeField(QWidget *parent, const style::InputField &st, Fn<QString()> placeholderFactory = Fn<QString()>(), const QString &val = QString()) : Ui::InputField(parent, st, std::move(placeholderFactory), val) {
 		connect(this, &Ui::InputField::changed, [this] { fix(); });
 	}
 
-	void setAutoSubmit(int length, base::lambda<void()> submitCallback) {
+	void setAutoSubmit(int length, Fn<void()> submitCallback) {
 		_autoSubmitLength = length;
 		_submitCallback = std::move(submitCallback);
 	}
-	void setChangedCallback(base::lambda<void()> changedCallback) {
+	void setChangedCallback(Fn<void()> changedCallback) {
 		_changedCallback = std::move(changedCallback);
 	}
 
@@ -49,14 +37,16 @@ private:
 	bool _fixing = false;
 
 	int _autoSubmitLength = 0;
-	base::lambda<void()> _submitCallback;
-	base::lambda<void()> _changedCallback;
+	Fn<void()> _submitCallback;
+	Fn<void()> _changedCallback;
 
 };
 
 class SentCodeCall {
 public:
-	SentCodeCall(QObject *parent, base::lambda_once<void()> callCallback, base::lambda<void()> updateCallback);
+	SentCodeCall(
+		FnMut<void()> callCallback,
+		Fn<void()> updateCallback);
 
 	enum class State {
 		Waiting,
@@ -88,22 +78,17 @@ public:
 
 private:
 	Status _status;
-	object_ptr<QTimer> _timer;
-	base::lambda_once<void()> _call;
-	base::lambda<void()> _update;
+	base::Timer _timer;
+	FnMut<void()> _call;
+	Fn<void()> _update;
 
 };
 
 class ConfirmPhoneBox : public BoxContent, public RPCSender {
-	Q_OBJECT
-
 public:
 	static void start(const QString &phone, const QString &hash);
 
 	~ConfirmPhoneBox();
-
-private slots:
-	void onSendCode();
 
 protected:
 	void prepare() override;
@@ -116,6 +101,7 @@ private:
 	ConfirmPhoneBox(QWidget*, const QString &phone, const QString &hash);
 	friend class object_ptr<ConfirmPhoneBox>;
 
+	void sendCode();
 	void sendCall();
 	void checkPhoneAndHash();
 

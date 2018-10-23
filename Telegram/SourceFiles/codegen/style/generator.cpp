@@ -1,25 +1,13 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "codegen/style/generator.h"
 
+#include <set>
 #include <memory>
 #include <functional>
 #include <QtCore/QDir>
@@ -39,7 +27,6 @@ namespace style {
 namespace {
 
 constexpr int kErrorBadIconSize     = 861;
-constexpr int kErrorBadIconFormat   = 862;
 
 // crc32 hash, taken somewhere from the internet
 
@@ -469,7 +456,7 @@ public:\n\
 	inline const color &get_transparent() const { return _colors[0]; }; // special color\n";
 
 	int indexInPalette = 1;
-	if (!module_.enumVariables([this, &indexInPalette](const Variable &variable) -> bool {
+	if (!module_.enumVariables([&](const Variable &variable) -> bool {
 		auto name = variable.name.back();
 		if (variable.value.type().tag != structure::TypeTag::Color) {
 			return false;
@@ -596,7 +583,7 @@ QList<row> data();\n\
 }
 
 bool Generator::writeStructsForwardDeclarations() {
-	bool hasNoExternalStructs = module_.enumVariables([this](const Variable &value) -> bool {
+	bool hasNoExternalStructs = module_.enumVariables([&](const Variable &value) -> bool {
 		if (value.value.type().tag == structure::TypeTag::Struct) {
 			if (!module_.findStructInModule(value.value.type().name, module_)) {
 				return false;
@@ -609,10 +596,14 @@ bool Generator::writeStructsForwardDeclarations() {
 	}
 
 	header_->newline();
-	bool result = module_.enumVariables([this](const Variable &value) -> bool {
+	std::set<QString> alreadyDeclaredTypes;
+	bool result = module_.enumVariables([&](const Variable &value) -> bool {
 		if (value.value.type().tag == structure::TypeTag::Struct) {
 			if (!module_.findStructInModule(value.value.type().name, module_)) {
-				header_->stream() << "struct " << value.value.type().name.back() << ";\n";
+				if (alreadyDeclaredTypes.find(value.value.type().name.back()) == alreadyDeclaredTypes.end()) {
+					header_->stream() << "struct " << value.value.type().name.back() << ";\n";
+					alreadyDeclaredTypes.emplace(value.value.type().name.back());
+				}
 			}
 		}
 		return true;
@@ -626,7 +617,7 @@ bool Generator::writeStructsDefinitions() {
 		return true;
 	}
 
-	bool result = module_.enumStructs([this](const Struct &value) -> bool {
+	bool result = module_.enumStructs([&](const Struct &value) -> bool {
 		header_->stream() << "\
 struct " << value.name.back() << " {\n";
 		for (auto &field : value.fields) {
@@ -654,7 +645,7 @@ bool Generator::writeRefsDeclarations() {
 	if (isPalette_) {
 		header_->stream() << "extern const style::color &transparent; // special color\n";
 	}
-	bool result = module_.enumVariables([this](const Variable &value) -> bool {
+	bool result = module_.enumVariables([&](const Variable &value) -> bool {
 		auto name = value.name.back();
 		auto type = typeToString(value.value.type());
 		if (type.isEmpty()) {
@@ -676,7 +667,7 @@ bool Generator::writeIncludesInSource() {
 	}
 
 	auto includes = QStringList();
-	std::function<bool(const Module&)> collector = [this, &collector, &includes](const Module &module) {
+	std::function<bool(const Module&)> collector = [&](const Module &module) {
 		module.enumIncludes(collector);
 		auto base = moduleBaseName(module);
 		if (!includes.contains(base)) {
@@ -698,7 +689,7 @@ bool Generator::writeVariableDefinitions() {
 	}
 
 	source_->newline();
-	bool result = module_.enumVariables([this](const Variable &variable) -> bool {
+	bool result = module_.enumVariables([&](const Variable &variable) -> bool {
 		auto name = variable.name.back();
 		auto type = typeToString(variable.value.type());
 		if (type.isEmpty()) {
@@ -718,7 +709,7 @@ bool Generator::writeRefsDefinition() {
 	if (isPalette_) {
 		source_->stream() << "const style::color &transparent(_palette.get_transparent()); // special color\n";
 	}
-	bool result = module_.enumVariables([this](const Variable &variable) -> bool {
+	bool result = module_.enumVariables([&](const Variable &variable) -> bool {
 		auto name = variable.name.back();
 		auto type = typeToString(variable.value.type());
 		if (type.isEmpty()) {
@@ -748,8 +739,8 @@ int palette::indexOfColor(style::color c) const {\n\
 }\n\
 \n\
 color palette::colorAtIndex(int index) const {\n\
-	t_assert(_ready);\n\
-	t_assert(index >= 0 && index < kCount);\n\
+	Assert(_ready);\n\
+	Assert(index >= 0 && index < kCount);\n\
 	return _colors[index];\n\
 }\n\
 \n\
@@ -760,7 +751,7 @@ void palette::finalize() {\n\
 	compute(0, -1, { 255, 255, 255, 0}); // special color\n";
 
 	QList<structure::FullName> names;
-	module_.enumVariables([this, &names](const Variable &variable) -> bool {
+	module_.enumVariables([&](const Variable &variable) -> bool {
 		names.push_back(variable.name);
 		return true;
 	});
@@ -769,7 +760,7 @@ void palette::finalize() {\n\
 	int indexInPalette = 1;
 	QByteArray checksumString;
 	checksumString.append("&transparent:{ 255, 255, 255, 0 }");
-	auto result = module_.enumVariables([this, &indexInPalette, &checksumString, &dataRows, &names](const Variable &variable) -> bool {
+	auto result = module_.enumVariables([&](const Variable &variable) -> bool {
 		auto name = variable.name.back();
 		auto index = indexInPalette++;
 		paletteIndices_.emplace(name, index);
@@ -834,7 +825,7 @@ int getPaletteIndex(QLatin1String name) {\n\
 	auto tabsUsed = 1;
 
 	// Returns true if at least one check was finished.
-	auto finishChecksTillKey = [this, &chars, &checkTypes, &checkLengthHistory, &tabsUsed, tabs](const QString &key) {
+	auto finishChecksTillKey = [&](const QString &key) {
 		auto result = false;
 		while (!chars.isEmpty() && key.midRef(0, chars.size()) != chars) {
 			result = true;
@@ -1077,7 +1068,7 @@ void init_" << baseName_ << "() {\n\
 
 	if (module_.hasIncludes()) {
 		bool writtenAtLeastOne = false;
-		bool result = module_.enumIncludes([this,&writtenAtLeastOne](const Module &module) -> bool {
+		bool result = module_.enumIncludes([&](const Module &module) -> bool {
 			if (module.hasVariables()) {
 				source_->stream() << "\tinit_" + moduleBaseName(module) + "();\n";
 				writtenAtLeastOne = true;
@@ -1104,7 +1095,7 @@ void init_" << baseName_ << "() {\n\
 
 	if (isPalette_) {
 		source_->stream() << "\t_palette.finalize();\n";
-	} else if (!module_.enumVariables([this](const Variable &variable) -> bool {
+	} else if (!module_.enumVariables([&](const Variable &variable) -> bool {
 		auto name = variable.name.back();
 		auto value = valueAssignmentCode(variable.value);
 		if (value.isEmpty()) {
@@ -1130,22 +1121,12 @@ bool Generator::writePxValuesInit() {
 	}
 	source_->stream() << "\
 void initPxValues() {\n\
-	if (cRetina()) return;\n\
-\n\
-	switch (cScale()) {\n";
-	for (int i = 1, scalesCount = _scales.size(); i < scalesCount; ++i) {
-		source_->stream() << "\tcase " << _scaleNames.at(i) << ":\n";
-		for (auto it = pxValues_.cbegin(), e = pxValues_.cend(); it != e; ++it) {
-			auto value = it.key();
-			int adjusted = structure::data::pxAdjust(value, _scales.at(i));
-			if (adjusted != value) {
-				source_->stream() << "\t\t" << pxValueName(value) << " = " << adjusted << ";\n";
-			}
-		}
-		source_->stream() << "\tbreak;\n";
+	const auto scale = cScale();\n";
+	for (auto it = pxValues_.cbegin(), e = pxValues_.cend(); it != e; ++it) {
+		auto value = it.key();
+		source_->stream() << "\t" << pxValueName(value) << " = ConvertScale(" << value << ", scale);\n";
 	}
 	source_->stream() << "\
-	}\n\
 }\n\n";
 	return true;
 }
@@ -1176,10 +1157,7 @@ QByteArray iconMaskValueSize(int width, int height) {
 	QLatin1String sizeTag("SIZE:");
 	result.append(sizeTag.data(), sizeTag.size());
 	{
-		QBuffer buffer(&result);
-		buffer.open(QIODevice::Append);
-
-		QDataStream stream(&buffer);
+		QDataStream stream(&result, QIODevice::Append);
 		stream.setVersion(QDataStream::Qt_5_1);
 		stream << qint32(width) << qint32(height);
 	}
@@ -1189,50 +1167,60 @@ QByteArray iconMaskValueSize(int width, int height) {
 QByteArray iconMaskValuePng(QString filepath) {
 	QByteArray result;
 
-	auto pathAndModifiers = filepath.split('-');
-	filepath = pathAndModifiers[0];
-	auto modifiers = pathAndModifiers.mid(1);
+	QFileInfo fileInfo(filepath);
+	auto directory = fileInfo.dir();
+	auto nameAndModifiers = fileInfo.fileName().split('-');
+	filepath = directory.filePath(nameAndModifiers[0]);
+	auto modifiers = nameAndModifiers.mid(1);
 
-	QImage png100x(filepath + ".png");
-	QImage png200x(filepath + "@2x.png");
-	png100x.setDevicePixelRatio(1.);
-	png200x.setDevicePixelRatio(1.);
-	if (png100x.isNull()) {
-		common::logError(common::kErrorFileNotOpened, filepath + ".png") << "could not open icon file";
+	const auto readImage = [&](const QString &postfix) {
+		const auto path = filepath + postfix + ".png";
+		auto result = QImage(path);
+		if (result.isNull()) {
+			common::logError(common::kErrorFileNotOpened, path) << "could not open icon file";
+			return QImage();
+		} else if (result.format() != QImage::Format_RGB32) {
+			result = std::move(result).convertToFormat(QImage::Format_RGB32);
+		}
+		result.setDevicePixelRatio(1.);
+		return result;
+	};
+	auto png1x = readImage("");
+	auto png2x = readImage("@2x");
+	auto png3x = readImage("@3x");
+	if (png1x.isNull() || png2x.isNull() || png3x.isNull()) {
 		return result;
 	}
-	if (png200x.isNull()) {
-		common::logError(common::kErrorFileNotOpened, filepath + "@2x.png") << "could not open icon file";
+	if (png1x.width() * 2 != png2x.width()
+		|| png1x.height() * 2 != png2x.height()
+		|| png1x.width() * 3 != png3x.width()
+		|| png1x.height() * 3 != png3x.height()) {
+		common::logError(kErrorBadIconSize, filepath + ".png")
+			<< "bad icons size, 1x: "
+			<< png1x.width() << "x" << png1x.height()
+			<< ", 2x: "
+			<< png2x.width() << "x" << png2x.height()
+			<< ", 3x: "
+			<< png3x.width() << "x" << png3x.height();
 		return result;
 	}
-	if (png100x.format() != png200x.format()) {
-		common::logError(kErrorBadIconFormat, filepath + ".png") << "1x and 2x icons have different format";
-		return result;
-	}
-	if (png100x.width() * 2 != png200x.width() || png100x.height() * 2 != png200x.height()) {
-		common::logError(kErrorBadIconSize, filepath + ".png") << "bad icons size, 1x: " << png100x.width() << "x" << png100x.height() << ", 2x: " << png200x.width() << "x" << png200x.height();
-		return result;
-	}
-	for (auto modifierName : modifiers) {
-		if (auto modifier = GetModifier(modifierName)) {
-			modifier(png100x, png200x);
+	for (const auto modifierName : modifiers) {
+		if (const auto modifier = GetModifier(modifierName)) {
+			modifier(png1x);
+			modifier(png2x);
+			modifier(png3x);
 		} else {
 			common::logError(common::kErrorInternal, filepath) << "modifier should be valid here, name: " << modifierName.toStdString();
 			return result;
 		}
 	}
-	QImage png125x = png200x.scaled(structure::data::pxAdjust(png100x.width(), 5), structure::data::pxAdjust(png100x.height(), 5), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-	QImage png150x = png200x.scaled(structure::data::pxAdjust(png100x.width(), 6), structure::data::pxAdjust(png100x.height(), 6), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-
-	QImage composed(png200x.width() + png100x.width(), png200x.height() + png150x.height(), png100x.format());
+	QImage composed(png3x.width(), png3x.height() + png2x.height(), QImage::Format_RGB32);
+	composed.fill(Qt::black);
 	{
 		QPainter p(&composed);
-		p.setCompositionMode(QPainter::CompositionMode_Source);
-		p.fillRect(0, 0, composed.width(), composed.height(), QColor(0, 0, 0, 255));
-		p.drawImage(0, 0, png200x);
-		p.drawImage(png200x.width(), 0, png100x);
-		p.drawImage(0, png200x.height(), png150x);
-		p.drawImage(png150x.width(), png200x.height(), png125x);
+		p.drawImage(0, 0, png1x);
+		p.drawImage(png1x.width(), 0, png2x);
+		p.drawImage(0, png2x.height(), png3x);
 	}
 	{
 		QBuffer buffer(&result);

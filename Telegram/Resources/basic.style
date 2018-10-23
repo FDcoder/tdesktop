@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 using "colors.palette";
 
@@ -53,7 +40,7 @@ lineWidth: 1px;
 
 defaultTextPalette: TextPalette {
 	linkFg: windowActiveTextFg;
-	monoFg: windowSubTextFg;
+	monoFg: msgInMonoFg;
 	selectBg: msgInBgSelected;
 	selectFg: transparent; // use painter current pen instead
 	selectLinkFg: historyLinkInFgSelected;
@@ -77,6 +64,9 @@ shadowToggleDuration: 200;
 slideDuration: 240;
 slideShift: 100px;
 slideShadow: icon {{ "slide_shadow", slideFadeOutShadowFg }};
+
+slideWrapDuration: 150;
+fadeWrapDuration: 200;
 
 linkCropLimit: 360px;
 linkFont: normalFont;
@@ -182,6 +172,21 @@ inFwdTextPaletteSelected: TextPalette(defaultTextPalette) {
 outFwdTextPaletteSelected: TextPalette(defaultTextPalette) {
 	linkFg: msgOutServiceFgSelected;
 }
+inReplyTextPalette: TextPalette(inTextPalette) {
+	linkFg: msgInDateFg;
+}
+inReplyTextPaletteSelected: TextPalette(inTextPaletteSelected) {
+	linkFg: msgInDateFgSelected;
+}
+outReplyTextPalette: TextPalette(outTextPalette) {
+	linkFg: msgOutDateFg;
+}
+outReplyTextPaletteSelected: TextPalette(outTextPaletteSelected) {
+	linkFg: msgOutDateFgSelected;
+}
+imgReplyTextPalette: TextPalette(defaultTextPalette) {
+	linkFg: msgImgReplyBarColor;
+}
 inSemiboldPalette: TextPalette(inTextPalette) {
 	linkFg: msgInServiceFg;
 	selectFg: msgInServiceFgSelected;
@@ -192,8 +197,10 @@ outSemiboldPalette: TextPalette(outTextPalette) {
 	selectFg: msgOutServiceFgSelected;
 	selectLinkFg: msgOutServiceFgSelected;
 }
+historyComposeAreaPalette: TextPalette(defaultTextPalette) {
+	linkFg: historyComposeAreaFgService;
+}
 
-mediaPadding: margins(0px, 0px, 0px, 0px);
 mediaCaptionSkip: 5px;
 mediaInBubbleSkip: 5px;
 mediaThumbSize: 48px;
@@ -225,8 +232,6 @@ emojiReplaceWidth: 52px;
 emojiReplaceHeight: 56px;
 emojiReplaceInnerHeight: 42px;
 emojiReplacePadding: 14px;
-
-connectingPadding: margins(5px, 5px, 5px, 5px);
 
 dragFont: font(28px semibold);
 dragSubfont: font(20px semibold);
@@ -288,7 +293,7 @@ inlineRowBorder: 1px;
 inlineRowBorderFg: shadowFg;
 inlineRowFileNameTop: 2px;
 inlineRowFileDescriptionTop: 23px;
-inlineResultsMinWidth: 64px;
+inlineResultsMinWidth: 48px;
 inlineDurationMargin: 3px;
 
 toastTextStyle: defaultTextStyle;

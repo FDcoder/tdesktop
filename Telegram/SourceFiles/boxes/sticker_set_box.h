@@ -1,27 +1,14 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include "boxes/abstract_box.h"
-#include <vector>
+#include "chat_helpers/stickers.h"
 
 class ConfirmBox;
 
@@ -35,21 +22,15 @@ class StickerSetBox : public BoxContent, public RPCSender {
 public:
 	StickerSetBox(QWidget*, const MTPInputStickerSet &set);
 
-signals:
-	void installed(uint64 id);
-
 protected:
 	void prepare() override;
 
 	void resizeEvent(QResizeEvent *e) override;
 
 private slots:
-	void onStickersUpdated();
 	void onAddStickers();
 	void onShareStickers();
 	void onUpdateButtons();
-
-	void onInstalled(uint64 id);
 
 private:
 	void updateButtons();
@@ -69,13 +50,15 @@ public:
 	Inner(QWidget *parent, const MTPInputStickerSet &set);
 
 	bool loaded() const;
-	int32 notInstalled() const;
+	bool notInstalled() const;
 	bool official() const;
-	base::lambda<TextWithEntities()> title() const;
+	Fn<TextWithEntities()> title() const;
 	QString shortName() const;
 
-	void setVisibleTopBottom(int visibleTop, int visibleBottom) override;
 	void install();
+	auto setInstalled() const {
+		return _setInstalled.events();
+	}
 
 	~Inner();
 
@@ -91,7 +74,6 @@ private slots:
 
 signals:
 	void updateButtons();
-	void installed(uint64 id);
 
 private:
 	void updateSelected();
@@ -110,18 +92,17 @@ private:
 	}
 
 	std::vector<Animation> _packOvers;
-	StickerPack _pack;
-	StickersByEmojiMap _emoji;
+	Stickers::Pack _pack;
+	Stickers::ByEmojiMap _emoji;
 	bool _loaded = false;
 	uint64 _setId = 0;
 	uint64 _setAccess = 0;
 	QString _setTitle, _setShortName;
-	int32 _setCount = 0;
+	int _setCount = 0;
 	int32 _setHash = 0;
 	MTPDstickerSet::Flags _setFlags = 0;
+	TimeId _setInstallDate = TimeId(0);
 
-	int _visibleTop = 0;
-	int _visibleBottom = 0;
 	MTPInputStickerSet _input;
 
 	mtpRequestId _installRequest = 0;
@@ -130,5 +111,7 @@ private:
 
 	QTimer _previewTimer;
 	int _previewShown = -1;
+
+	rpl::event_stream<uint64> _setInstalled;
 
 };

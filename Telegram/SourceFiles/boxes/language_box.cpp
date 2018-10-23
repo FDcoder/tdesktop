@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/language_box.h"
 
@@ -27,13 +14,14 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "boxes/confirm_box.h"
 #include "mainwidget.h"
 #include "mainwindow.h"
+#include "messenger.h"
 #include "lang/lang_instance.h"
 #include "lang/lang_cloud_manager.h"
 #include "styles/style_boxes.h"
 
 class LanguageBox::Inner : public TWidget, private base::Subscriber {
 public:
-	Inner(QWidget *parent, gsl::not_null<Languages*> languages);
+	Inner(QWidget *parent, not_null<Languages*> languages);
 
 	void setSelected(int index);
 	void refresh();
@@ -42,13 +30,13 @@ private:
 	void activateCurrent();
 	void languageChanged(int languageIndex);
 
-	gsl::not_null<Languages*> _languages;
+	not_null<Languages*> _languages;
 	std::shared_ptr<Ui::RadiobuttonGroup> _group;
 	std::vector<object_ptr<Ui::Radiobutton>> _buttons;
 
 };
 
-LanguageBox::Inner::Inner(QWidget *parent, gsl::not_null<Languages*> languages) : TWidget(parent)
+LanguageBox::Inner::Inner(QWidget *parent, not_null<Languages*> languages) : TWidget(parent)
 , _languages(languages) {
 	_group = std::make_shared<Ui::RadiobuttonGroup>(0);
 	_group->setChangedCallback([this](int value) { languageChanged(value); });
@@ -162,4 +150,28 @@ void LanguageBox::refreshLanguages() {
 		_languages.push_back({ currentId, lang(lng_language_name), lang(lng_language_name) });
 	}
 	_inner->setSelected(currentIndex);
+}
+
+base::binary_guard LanguageBox::Show() {
+	auto result = base::binary_guard();
+
+	const auto manager = Messenger::Instance().langCloudManager();
+	if (manager->languageList().isEmpty()) {
+		auto guard = std::make_shared<base::binary_guard>();
+		std::tie(result, *guard) = base::make_binary_guard();
+		auto alive = std::make_shared<std::unique_ptr<base::Subscription>>(
+			std::make_unique<base::Subscription>());
+		**alive = manager->languageListChanged().add_subscription([=] {
+			const auto show = guard->alive();
+			*alive = nullptr;
+			if (show) {
+				Ui::show(Box<LanguageBox>());
+			}
+		});
+	} else {
+		Ui::show(Box<LanguageBox>());
+	}
+	manager->requestLanguageList();
+
+	return result;
 }

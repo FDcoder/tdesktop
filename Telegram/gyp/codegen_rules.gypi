@@ -1,21 +1,8 @@
 # This file is part of Telegram Desktop,
-# the official desktop version of Telegram messaging app, see https://telegram.org
+# the official desktop application for the Telegram messaging service.
 #
-# Telegram Desktop is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# It is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU General Public License for more details.
-#
-# In addition, as a special exception, the copyright holders give permission
-# to link the code of portions of this program with the OpenSSL library.
-#
-# Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-# Copyright (c) 2014 John Preston, https://desktop.telegram.org
+# For license and copyright information please follow this link:
+# https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 {
   'actions': [{
@@ -110,22 +97,6 @@
       '-w', '<(PRODUCT_DIR)/..',
     ],
     'message': 'codegen_numbers-ing numbers.txt..',
-    'process_outputs_as_sources': 1,
-  }, {
-    'action_name': 'codegen_scheme',
-    'inputs': [
-      '<(src_loc)/codegen/scheme/codegen_scheme.py',
-      '<(res_loc)/scheme.tl',
-    ],
-    'outputs': [
-      '<(SHARED_INTERMEDIATE_DIR)/scheme.cpp',
-      '<(SHARED_INTERMEDIATE_DIR)/scheme.h',
-    ],
-    'action': [
-      'python', '<(src_loc)/codegen/scheme/codegen_scheme.py',
-      '-o', '<(SHARED_INTERMEDIATE_DIR)', '<(res_loc)/scheme.tl',
-    ],
-    'message': 'codegen_scheme-ing scheme.tl..',
     'process_outputs_as_sources': 1,
   }, {
     'action_name': 'codegen_emoji',

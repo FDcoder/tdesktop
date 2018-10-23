@@ -1,49 +1,28 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include "boxes/abstract_box.h"
 
 class EditColorBox : public BoxContent {
-	Q_OBJECT
-
 public:
 	EditColorBox(QWidget*, const QString &title, QColor current = QColor(255, 255, 255));
 
-	void setSaveCallback(base::lambda<void(QColor)> callback) {
+	void setSaveCallback(Fn<void(QColor)> callback) {
 		_saveCallback = std::move(callback);
 	}
 
-	void setCancelCallback(base::lambda<void()> callback) {
+	void setCancelCallback(Fn<void()> callback) {
 		_cancelCallback = std::move(callback);
 	}
 
 	void showColor(QColor color) {
 		updateFromColor(color);
-	}
-
-	void closeHook() override {
-		if (_cancelCallback) {
-			_cancelCallback();
-		}
 	}
 
 protected:
@@ -56,12 +35,9 @@ protected:
 
 	void setInnerFocus() override;
 
-private slots:
-	void onFieldChanged();
-	void onFieldSubmitted();
-
 private:
 	void saveColor();
+	void fieldSubmitted();
 
 	void updateFromColor(QColor color);
 	void updateControlsFromColor();
@@ -109,7 +85,7 @@ private:
 	QRect _currentRect;
 	QRect _newRect;
 
-	base::lambda<void(QColor)> _saveCallback;
-	base::lambda<void()> _cancelCallback;
+	Fn<void(QColor)> _saveCallback;
+	Fn<void()> _cancelCallback;
 
 };

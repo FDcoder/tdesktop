@@ -1,26 +1,13 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "ui/twidget.h"
+#include "ui/rp_widget.h"
 #include "base/timer.h"
 
 namespace Window {
@@ -35,12 +22,12 @@ namespace ChatHelpers {
 
 class TabbedSelector;
 
-class TabbedPanel : public TWidget {
+class TabbedPanel : public Ui::RpWidget{
 	Q_OBJECT
 
 public:
-	TabbedPanel(QWidget *parent, gsl::not_null<Window::Controller*> controller);
-	TabbedPanel(QWidget *parent, gsl::not_null<Window::Controller*> controller, object_ptr<TabbedSelector> selector);
+	TabbedPanel(QWidget *parent, not_null<Window::Controller*> controller);
+	TabbedPanel(QWidget *parent, not_null<Window::Controller*> controller, object_ptr<TabbedSelector> selector);
 
 	object_ptr<TabbedSelector> takeSelector();
 	QPointer<TabbedSelector> getSelector() const;
@@ -50,8 +37,6 @@ public:
 	bool hiding() const {
 		return _hiding || _hideTimer.isActive();
 	}
-
-	void stickersInstalled(uint64 setId);
 
 	bool overlaps(const QRect &globalRect) const;
 
@@ -79,6 +64,7 @@ private:
 	bool isDestroying() const {
 		return !_selector;
 	}
+	void showFromSelector();
 
 	style::margins innerPadding() const;
 
@@ -106,7 +92,7 @@ private:
 	bool preventAutoHide() const;
 	void updateContentHeight();
 
-	gsl::not_null<Window::Controller*> _controller;
+	not_null<Window::Controller*> _controller;
 	object_ptr<TabbedSelector> _selector;
 
 	int _contentMaxHeight = 0;

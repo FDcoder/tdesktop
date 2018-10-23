@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -34,17 +21,17 @@ class CalendarBox;
 
 class EditParticipantBox : public BoxContent {
 public:
-	EditParticipantBox(QWidget*, gsl::not_null<ChannelData*> channel, gsl::not_null<UserData*> user, bool hasAdminRights);
+	EditParticipantBox(QWidget*, not_null<ChannelData*> channel, not_null<UserData*> user, bool hasAdminRights);
 
 protected:
 	void prepare() override;
 
 	void resizeToContent();
 
-	gsl::not_null<UserData*> user() const {
+	not_null<UserData*> user() const {
 		return _user;
 	}
-	gsl::not_null<ChannelData*> channel() const {
+	not_null<ChannelData*> channel() const {
 		return _channel;
 	}
 
@@ -57,11 +44,9 @@ protected:
 		return _hasAdminRights;
 	}
 
-	class Divider;
-
 private:
-	gsl::not_null<ChannelData*> _channel;
-	gsl::not_null<UserData*> _user;
+	not_null<ChannelData*> _channel;
+	not_null<UserData*> _user;
 	bool _hasAdminRights = false;
 
 	class Inner;
@@ -71,9 +56,9 @@ private:
 
 class EditAdminBox : public EditParticipantBox {
 public:
-	EditAdminBox(QWidget*, gsl::not_null<ChannelData*> channel, gsl::not_null<UserData*> user, const MTPChannelAdminRights &rights);
+	EditAdminBox(QWidget*, not_null<ChannelData*> channel, not_null<UserData*> user, const MTPChannelAdminRights &rights);
 
-	void setSaveCallback(base::lambda<void(MTPChannelAdminRights, MTPChannelAdminRights)> callback) {
+	void setSaveCallback(Fn<void(MTPChannelAdminRights, MTPChannelAdminRights)> callback) {
 		_saveCallback = std::move(callback);
 	}
 
@@ -84,7 +69,7 @@ private:
 	using Flag = MTPDchannelAdminRights::Flag;
 	using Flags = MTPDchannelAdminRights::Flags;
 
-	static MTPChannelAdminRights DefaultRights(gsl::not_null<ChannelData*> channel);
+	static MTPChannelAdminRights DefaultRights(not_null<ChannelData*> channel);
 
 	bool canSave() const {
 		return !!_saveCallback;
@@ -94,7 +79,7 @@ private:
 
 	const MTPChannelAdminRights _oldRights;
 	std::vector<std::pair<Flag, Flag>> _dependencies;
-	base::lambda<void(MTPChannelAdminRights, MTPChannelAdminRights)> _saveCallback;
+	Fn<void(MTPChannelAdminRights, MTPChannelAdminRights)> _saveCallback;
 
 	std::map<Flags, QPointer<Ui::Checkbox>> _checkboxes;
 	QPointer<Ui::FlatLabel> _aboutAddAdmins;
@@ -106,9 +91,9 @@ private:
 
 class EditRestrictedBox : public EditParticipantBox {
 public:
-	EditRestrictedBox(QWidget*, gsl::not_null<ChannelData*> channel, gsl::not_null<UserData*> user, bool hasAdminRights, const MTPChannelBannedRights &rights);
+	EditRestrictedBox(QWidget*, not_null<ChannelData*> channel, not_null<UserData*> user, bool hasAdminRights, const MTPChannelBannedRights &rights);
 
-	void setSaveCallback(base::lambda<void(MTPChannelBannedRights, MTPChannelBannedRights)> callback) {
+	void setSaveCallback(Fn<void(MTPChannelBannedRights, MTPChannelBannedRights)> callback) {
 		_saveCallback = std::move(callback);
 	}
 
@@ -119,7 +104,7 @@ private:
 	using Flag = MTPDchannelBannedRights::Flag;
 	using Flags = MTPDchannelBannedRights::Flags;
 
-	static MTPChannelBannedRights DefaultRights(gsl::not_null<ChannelData*> channel);
+	static MTPChannelBannedRights DefaultRights(not_null<ChannelData*> channel);
 
 	bool canSave() const {
 		return !!_saveCallback;
@@ -138,7 +123,7 @@ private:
 	const MTPChannelBannedRights _oldRights;
 	TimeId _until = 0;
 	std::vector<std::pair<Flag, Flag>> _dependencies;
-	base::lambda<void(MTPChannelBannedRights, MTPChannelBannedRights)> _saveCallback;
+	Fn<void(MTPChannelBannedRights, MTPChannelBannedRights)> _saveCallback;
 
 	std::map<Flags, QPointer<Ui::Checkbox>> _checkboxes;
 

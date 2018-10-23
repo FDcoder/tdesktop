@@ -1,25 +1,15 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "ui/rp_widget.h"
+#include "ui/wrap/padding_wrap.h"
+#include "boxes/abstract_box.h"
 #include "styles/style_widgets.h"
 
 namespace Ui {
@@ -57,9 +47,12 @@ private:
 
 };
 
-class LabelSimple : public TWidget {
+class LabelSimple : public RpWidget {
 public:
-	LabelSimple(QWidget *parent, const style::LabelSimple &st = st::defaultLabelSimple, const QString &value = QString());
+	LabelSimple(
+		QWidget *parent,
+		const style::LabelSimple &st = st::defaultLabelSimple,
+		const QString &value = QString());
 
 	// This method also resizes the label.
 	void setText(const QString &newText, bool *outTextChanged = nullptr);
@@ -78,7 +71,7 @@ private:
 
 };
 
-class FlatLabel : public TWidget, public ClickHandlerHost {
+class FlatLabel : public RpWidget, public ClickHandlerHost {
 	Q_OBJECT
 
 public:
@@ -88,7 +81,20 @@ public:
 		Simple,
 		Rich,
 	};
-	FlatLabel(QWidget *parent, const QString &text, InitType initType, const style::FlatLabel &st = st::defaultFlatLabel);
+	FlatLabel(
+		QWidget *parent,
+		const QString &text,
+		InitType initType,
+		const style::FlatLabel &st = st::defaultFlatLabel);
+
+	FlatLabel(
+		QWidget *parent,
+		rpl::producer<QString> &&text,
+		const style::FlatLabel &st = st::defaultFlatLabel);
+	FlatLabel(
+		QWidget *parent,
+		rpl::producer<TextWithEntities> &&text,
+		const style::FlatLabel &st = st::defaultFlatLabel);
 
 	void setOpacity(float64 o);
 
@@ -102,17 +108,23 @@ public:
 	void setBreakEverywhere(bool breakEverywhere);
 
 	int naturalWidth() const override;
+	QMargins getMargins() const override;
 
 	void setLink(uint16 lnkIndex, const ClickHandlerPtr &lnk);
 
-	using ClickHandlerHook = base::lambda<bool(const ClickHandlerPtr&, Qt::MouseButton)>;
-	void setClickHandlerHook(ClickHandlerHook &&hook);
+	using ClickHandlerFilter = Fn<bool(const ClickHandlerPtr&, Qt::MouseButton)>;
+	void setClickHandlerFilter(ClickHandlerFilter &&filter);
 
 	// ClickHandlerHost interface
 	void clickHandlerActiveChanged(const ClickHandlerPtr &action, bool active) override;
 	void clickHandlerPressedChanged(const ClickHandlerPtr &action, bool pressed) override;
 
-	static std::unique_ptr<CrossFadeAnimation> CrossFade(FlatLabel *from, FlatLabel *to, style::color bg, QPoint fromPosition = QPoint(), QPoint toPosition = QPoint());
+	static std::unique_ptr<CrossFadeAnimation> CrossFade(
+		not_null<FlatLabel*> from,
+		not_null<FlatLabel*> to,
+		style::color bg,
+		QPoint fromPosition = QPoint(),
+		QPoint toPosition = QPoint());
 
 protected:
 	void paintEvent(QPaintEvent *e) override;
@@ -126,7 +138,7 @@ protected:
 	void focusInEvent(QFocusEvent *e) override;
 	void keyPressEvent(QKeyEvent *e) override;
 	void contextMenuEvent(QContextMenuEvent *e) override;
-	bool event(QEvent *e) override; // calls touchEvent when necessary
+	bool eventHook(QEvent *e) override; // calls touchEvent when necessary
 	void touchEvent(QTouchEvent *e);
 
 	int resizeGetHeight(int newWidth) override;
@@ -134,7 +146,6 @@ protected:
 private slots:
 	void onCopySelectedText();
 	void onCopyContextText();
-	void onCopyContextUrl();
 
 	void onTouchSelect();
 	void onContextMenuDestroy(QObject *obj);
@@ -193,17 +204,31 @@ private:
 	QTimer _trippleClickTimer;
 
 	Ui::PopupMenu *_contextMenu = nullptr;
-	ClickHandlerPtr _contextMenuClickHandler;
 	QString _contextCopyText;
 	ExpandLinksMode _contextExpandLinksMode = ExpandLinksAll;
 
-	ClickHandlerHook _clickHandlerHook;
+	ClickHandlerFilter _clickHandlerFilter;
 
 	// text selection and context menu by touch support (at least Windows Surface tablets)
 	bool _touchSelect = false;
 	bool _touchInProgress = false;
 	QPoint _touchStart, _touchPrevPos, _touchPos;
 	QTimer _touchSelectTimer;
+
+};
+
+class DividerLabel : public PaddingWrap<Ui::FlatLabel> {
+public:
+	using PaddingWrap::PaddingWrap;
+
+	int naturalWidth() const override;
+
+protected:
+	void resizeEvent(QResizeEvent *e) override;
+
+private:
+	object_ptr<BoxContentDivider> _background
+		= object_ptr<BoxContentDivider>(this);
 
 };
 

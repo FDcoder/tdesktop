@@ -1,26 +1,17 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include "abstract_box.h"
+
+namespace style {
+struct CalendarSizes;
+} // namespace style
 
 namespace Ui {
 class IconButton;
@@ -28,7 +19,20 @@ class IconButton;
 
 class CalendarBox : public BoxContent {
 public:
-	CalendarBox(QWidget*, QDate month, QDate highlighted, base::lambda<void(QDate date)> callback);
+	CalendarBox(
+		QWidget*,
+		QDate month,
+		QDate highlighted,
+		Fn<void(QDate date)> callback,
+		FnMut<void(not_null<CalendarBox*>)> finalize = nullptr);
+	CalendarBox(
+		QWidget*,
+		QDate month,
+		QDate highlighted,
+		Fn<void(QDate date)> callback,
+		FnMut<void(not_null<CalendarBox*>)> finalize,
+		const style::CalendarSizes &st);
+
 
 	void setMinDate(QDate date);
 	void setMaxDate(QDate date);
@@ -46,6 +50,8 @@ private:
 	bool isPreviousEnabled() const;
 	bool isNextEnabled() const;
 
+	const style::CalendarSizes &_st;
+
 	class Context;
 	std::unique_ptr<Context> _context;
 
@@ -57,6 +63,7 @@ private:
 	object_ptr<Ui::IconButton> _previous;
 	object_ptr<Ui::IconButton> _next;
 
-	base::lambda<void(QDate date)> _callback;
+	Fn<void(QDate date)> _callback;
+	FnMut<void(not_null<CalendarBox*>)> _finalize;
 
 };

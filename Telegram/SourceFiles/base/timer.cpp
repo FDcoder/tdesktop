@@ -1,24 +1,13 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "base/timer.h"
+
+#include <QtCore/QTimerEvent>
 
 namespace base {
 namespace {
@@ -30,12 +19,25 @@ QObject *TimersAdjuster() {
 
 } // namespace
 
-Timer::Timer(base::lambda<void()> callback) : QObject(nullptr)
+Timer::Timer(
+	not_null<QThread*> thread,
+	Fn<void()> callback)
+: Timer(std::move(callback)) {
+	moveToThread(thread);
+}
+
+Timer::Timer(Fn<void()> callback)
+: QObject(nullptr)
 , _callback(std::move(callback))
 , _type(Qt::PreciseTimer)
 , _adjusted(false) {
 	setRepeat(Repeat::Interval);
-	connect(TimersAdjuster(), &QObject::destroyed, this, [this] { adjust(); }, Qt::QueuedConnection);
+	connect(
+		TimersAdjuster(),
+		&QObject::destroyed,
+		this,
+		[this] { adjust(); },
+		Qt::QueuedConnection);
 }
 
 void Timer::start(TimeMs timeout, Qt::TimerType type, Repeat repeat) {
@@ -47,7 +49,7 @@ void Timer::start(TimeMs timeout, Qt::TimerType type, Repeat repeat) {
 	setTimeout(timeout);
 	_timerId = startTimer(_timeout, _type);
 	if (_timerId) {
-		_next = getms(true) + _timeout;
+		_next = crl::time() + _timeout;
 	} else {
 		_next = 0;
 	}
@@ -63,13 +65,17 @@ TimeMs Timer::remainingTime() const {
 	if (!isActive()) {
 		return -1;
 	}
-	auto now = getms(true);
+	auto now = crl::time();
 	return (_next > now) ? (_next - now) : TimeMs(0);
 }
 
 void Timer::Adjust() {
 	QObject emitter;
-	connect(&emitter, &QObject::destroyed, TimersAdjuster(), &QObject::destroyed);
+	connect(
+		&emitter,
+		&QObject::destroyed,
+		TimersAdjuster(),
+		&QObject::destroyed);
 }
 
 void Timer::adjust() {
@@ -83,6 +89,7 @@ void Timer::adjust() {
 
 void Timer::setTimeout(TimeMs timeout) {
 	Expects(timeout >= 0 && timeout <= std::numeric_limits<int>::max());
+
 	_timeout = static_cast<unsigned int>(timeout);
 }
 
@@ -95,7 +102,7 @@ void Timer::timerEvent(QTimerEvent *e) {
 		if (_adjusted) {
 			start(_timeout, _type, repeat());
 		} else {
-			_next = getms(true) + _timeout;
+			_next = crl::time() + _timeout;
 		}
 	} else {
 		cancel();
@@ -106,8 +113,12 @@ void Timer::timerEvent(QTimerEvent *e) {
 	}
 }
 
-int DelayedCallTimer::call(TimeMs timeout, lambda_once<void()> callback, Qt::TimerType type) {
+int DelayedCallTimer::call(
+		TimeMs timeout,
+		FnMut<void()> callback,
+		Qt::TimerType type) {
 	Expects(timeout >= 0);
+
 	if (!callback) {
 		return 0;
 	}
@@ -121,7 +132,7 @@ int DelayedCallTimer::call(TimeMs timeout, lambda_once<void()> callback, Qt::Tim
 void DelayedCallTimer::cancel(int callId) {
 	if (callId) {
 		killTimer(callId);
-		_callbacks.erase(callId);
+		_callbacks.remove(callId);
 	}
 }
 

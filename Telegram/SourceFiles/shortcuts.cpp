@@ -1,27 +1,13 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "shortcuts.h"
 
 #include "mainwindow.h"
-#include "passcodewidget.h"
 #include "mainwidget.h"
 #include "messenger.h"
 #include "media/player/media_player_instance.h"
@@ -33,36 +19,20 @@ namespace ShortcutCommands {
 using Handler = bool(*)();
 
 bool lock_telegram() {
-	if (auto w = App::wnd()) {
-		if (App::passcoded()) {
-			w->passcodeWidget()->onSubmit();
-			return true;
-		} else if (Global::LocalPasscode()) {
-			Messenger::Instance().setupPasscode();
-			return true;
-		}
+	if (!Messenger::Instance().passcodeLocked()
+		&& Global::LocalPasscode()) {
+		Messenger::Instance().lockByPasscode();
+		return true;
 	}
 	return false;
 }
 
 bool minimize_telegram() {
-	if (auto w = App::wnd()) {
-		if (Global::WorkMode().value() == dbiwmTrayOnly) {
-			w->minimizeToTray();
-		} else {
-			w->setWindowState(Qt::WindowMinimized);
-		}
-	}
-	return true;
+	return Messenger::Instance().minimizeActiveWindow();
 }
 
 bool close_telegram() {
-	if (!Ui::hideWindowNoQuit()) {
-		if (auto w = App::wnd()) {
-			w->close();
-		}
-	}
-	return true;
+	return Messenger::Instance().closeActiveWindow();
 }
 
 bool quit_telegram() {
@@ -152,7 +122,7 @@ void destroyShortcut(QShortcut *shortcut);
 
 struct DataStruct {
 	DataStruct() {
-		t_assert(DataPtr == nullptr);
+		Assert(DataPtr == nullptr);
 		DataPtr = this;
 
 		if (autoRepeatCommands.isEmpty()) {
@@ -231,16 +201,16 @@ struct DataStruct {
 namespace {
 
 void createCommand(const QString &command, ShortcutCommands::Handler handler) {
-	t_assert(DataPtr != nullptr);
-	t_assert(!command.isEmpty());
+	Assert(DataPtr != nullptr);
+	Assert(!command.isEmpty());
 
 	DataPtr->commands.insert(command, handler);
 	DataPtr->commandnames.insert(handler, command);
 }
 
 QKeySequence setShortcut(const QString &keys, const QString &command) {
-	t_assert(DataPtr != nullptr);
-	t_assert(!command.isEmpty());
+	Assert(DataPtr != nullptr);
+	Assert(!command.isEmpty());
 	if (keys.isEmpty()) return QKeySequence();
 
 	QKeySequence seq(keys, QKeySequence::PortableText);
@@ -251,7 +221,7 @@ QKeySequence setShortcut(const QString &keys, const QString &command) {
 		if (it == DataPtr->commands.cend()) {
 			LOG(("Warning: could not find shortcut command handler '%1'").arg(command));
 		} else {
-			auto shortcut = std::make_unique<QShortcut>(seq, App::wnd(), nullptr, nullptr, Qt::ApplicationShortcut);
+			auto shortcut = std::make_unique<QShortcut>(seq, Messenger::Instance().getActiveWindow(), nullptr, nullptr, Qt::ApplicationShortcut);
 			if (!DataPtr->autoRepeatCommands.contains(command)) {
 				shortcut->setAutoRepeat(false);
 			}
@@ -282,7 +252,7 @@ QKeySequence setShortcut(const QString &keys, const QString &command) {
 }
 
 QKeySequence removeShortcut(const QString &keys) {
-	t_assert(DataPtr != nullptr);
+	Assert(DataPtr != nullptr);
 	if (keys.isEmpty()) return QKeySequence();
 
 	QKeySequence seq(keys, QKeySequence::PortableText);
@@ -300,7 +270,7 @@ QKeySequence removeShortcut(const QString &keys) {
 }
 
 void destroyShortcut(QShortcut *shortcut) {
-	t_assert(DataPtr != nullptr);
+	Assert(DataPtr != nullptr);
 
 	DataPtr->handlers.remove(shortcut->id());
 	DataPtr->mediaShortcuts.remove(shortcut);
@@ -310,7 +280,7 @@ void destroyShortcut(QShortcut *shortcut) {
 } // namespace
 
 void start() {
-	t_assert(Global::started());
+	Assert(Global::started());
 
 	new DataStruct();
 
@@ -428,12 +398,12 @@ void start() {
 }
 
 const QStringList &errors() {
-	t_assert(DataPtr != nullptr);
+	Assert(DataPtr != nullptr);
 	return DataPtr->errors;
 }
 
 bool launch(int shortcutId) {
-	t_assert(DataPtr != nullptr);
+	Assert(DataPtr != nullptr);
 
 	auto it = DataPtr->handlers.constFind(shortcutId);
 	if (it == DataPtr->handlers.cend()) {
@@ -443,7 +413,7 @@ bool launch(int shortcutId) {
 }
 
 bool launch(const QString &command) {
-	t_assert(DataPtr != nullptr);
+	Assert(DataPtr != nullptr);
 
 	auto it = DataPtr->commands.constFind(command);
 	if (it == DataPtr->commands.cend()) {

@@ -1,26 +1,15 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "storage/localimageloader.h"
 
+#include "data/data_document.h"
 #include "core/file_utilities.h"
+#include "core/mime_type.h"
 #include "media/media_audio.h"
 #include "boxes/send_files_box.h"
 #include "media/media_clip_reader.h"
@@ -28,39 +17,98 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "mainwindow.h"
 #include "lang/lang_keys.h"
 #include "boxes/confirm_box.h"
+#include "storage/file_download.h"
+#include "storage/storage_media_prepare.h"
 
-namespace {
+using Storage::ValidateThumbDimensions;
 
-bool ValidateThumbDimensions(int width, int height) {
-	return (width > 0) && (height > 0) && (width < 20 * height) && (height < 20 * width);
+SendMediaReady PreparePeerPhoto(PeerId peerId, QImage &&image) {
+	PreparedPhotoThumbs photoThumbs;
+	QVector<MTPPhotoSize> photoSizes;
+
+	QByteArray jpeg;
+	QBuffer jpegBuffer(&jpeg);
+	image.save(&jpegBuffer, "JPG", 87);
+
+	const auto scaled = [&](int size) {
+		return App::pixmapFromImageInPlace(image.scaled(
+			size,
+			size,
+			Qt::KeepAspectRatio,
+			Qt::SmoothTransformation));
+	};
+	const auto push = [&](const char *type, QPixmap &&pixmap) {
+		photoSizes.push_back(MTP_photoSize(
+			MTP_string(type),
+			MTP_fileLocationUnavailable(
+				MTP_long(0),
+				MTP_int(0),
+				MTP_long(0)),
+			MTP_int(pixmap.width()),
+			MTP_int(pixmap.height()), MTP_int(0)));
+		photoThumbs.insert(type[0], std::move(pixmap));
+	};
+	push("a", scaled(160));
+	push("b", scaled(320));
+	push("c", App::pixmapFromImageInPlace(std::move(image)));
+
+	const auto id = rand_value<PhotoId>();
+	const auto photo = MTP_photo(
+		MTP_flags(0),
+		MTP_long(id),
+		MTP_long(0),
+		MTP_bytes(QByteArray()),
+		MTP_int(unixtime()),
+		MTP_vector<MTPPhotoSize>(photoSizes));
+
+	QString file, filename;
+	int32 filesize = 0;
+	QByteArray data;
+
+	return SendMediaReady(
+		SendMediaType::Photo,
+		file,
+		filename,
+		filesize,
+		data,
+		id,
+		id,
+		qsl("jpg"),
+		peerId,
+		photo,
+		photoThumbs,
+		MTP_documentEmpty(MTP_long(0)),
+		jpeg,
+		0);
 }
 
-} // namespace
-
-TaskQueue::TaskQueue(QObject *parent, int32 stopTimeoutMs) : QObject(parent), _thread(0), _worker(0), _stopTimer(0) {
+TaskQueue::TaskQueue(TimeMs stopTimeoutMs) {
 	if (stopTimeoutMs > 0) {
 		_stopTimer = new QTimer(this);
 		connect(_stopTimer, SIGNAL(timeout()), this, SLOT(stop()));
 		_stopTimer->setSingleShot(true);
-		_stopTimer->setInterval(stopTimeoutMs);
+		_stopTimer->setInterval(int(stopTimeoutMs));
 	}
 }
 
-TaskId TaskQueue::addTask(TaskPtr task) {
+TaskId TaskQueue::addTask(std::unique_ptr<Task> &&task) {
+	const auto result = task->id();
 	{
 		QMutexLocker lock(&_tasksToProcessMutex);
-		_tasksToProcess.push_back(task);
+		_tasksToProcess.push_back(std::move(task));
 	}
 
 	wakeThread();
 
-	return task->id();
+	return result;
 }
 
-void TaskQueue::addTasks(const TasksList &tasks) {
+void TaskQueue::addTasks(std::vector<std::unique_ptr<Task>> &&tasks) {
 	{
 		QMutexLocker lock(&_tasksToProcessMutex);
-		_tasksToProcess.append(tasks);
+		for (auto &task : tasks) {
+			_tasksToProcess.push_back(std::move(task));
+		}
 	}
 
 	wakeThread();
@@ -83,31 +131,33 @@ void TaskQueue::wakeThread() {
 }
 
 void TaskQueue::cancelTask(TaskId id) {
+	const auto removeFrom = [&](std::deque<std::unique_ptr<Task>> &queue) {
+		const auto proj = [](const std::unique_ptr<Task> &task) {
+			return task->id();
+		};
+		auto i = ranges::find(queue, id, proj);
+		if (i != queue.end()) {
+			queue.erase(i);
+		}
+	};
 	{
 		QMutexLocker lock(&_tasksToProcessMutex);
-		for (int32 i = 0, l = _tasksToProcess.size(); i != l; ++i) {
-			if (_tasksToProcess.at(i)->id() == id) {
-				_tasksToProcess.removeAt(i);
-				return;
-			}
+		removeFrom(_tasksToProcess);
+		if (_taskInProcessId == id) {
+			_taskInProcessId = TaskId();
 		}
 	}
 	QMutexLocker lock(&_tasksToFinishMutex);
-	for (int32 i = 0, l = _tasksToFinish.size(); i != l; ++i) {
-		if (_tasksToFinish.at(i)->id() == id) {
-			_tasksToFinish.removeAt(i);
-			return;
-		}
-	}
+	removeFrom(_tasksToFinish);
 }
 
 void TaskQueue::onTaskProcessed() {
 	do {
-		TaskPtr task;
+		auto task = std::unique_ptr<Task>();
 		{
 			QMutexLocker lock(&_tasksToFinishMutex);
-			if (_tasksToFinish.isEmpty()) break;
-			task = _tasksToFinish.front();
+			if (_tasksToFinish.empty()) break;
+			task = std::move(_tasksToFinish.front());
 			_tasksToFinish.pop_front();
 		}
 		task->finish();
@@ -115,7 +165,7 @@ void TaskQueue::onTaskProcessed() {
 
 	if (_stopTimer) {
 		QMutexLocker lock(&_tasksToProcessMutex);
-		if (_tasksToProcess.isEmpty()) {
+		if (_tasksToProcess.empty() && !_taskInProcessId) {
 			_stopTimer->start();
 		}
 	}
@@ -134,6 +184,7 @@ void TaskQueue::stop() {
 	}
 	_tasksToProcess.clear();
 	_tasksToFinish.clear();
+	_taskInProcessId = TaskId();
 }
 
 TaskQueue::~TaskQueue() {
@@ -147,11 +198,13 @@ void TaskQueueWorker::onTaskAdded() {
 
 	bool someTasksLeft = false;
 	do {
-		TaskPtr task;
+		auto task = std::unique_ptr<Task>();
 		{
 			QMutexLocker lock(&_queue->_tasksToProcessMutex);
-			if (!_queue->_tasksToProcess.isEmpty()) {
-				task = _queue->_tasksToProcess.front();
+			if (!_queue->_tasksToProcess.empty()) {
+				task = std::move(_queue->_tasksToProcess.front());
+				_queue->_tasksToProcess.pop_front();
+				_queue->_taskInProcessId = task->id();
 			}
 		}
 
@@ -160,13 +213,13 @@ void TaskQueueWorker::onTaskAdded() {
 			bool emitTaskProcessed = false;
 			{
 				QMutexLocker lockToProcess(&_queue->_tasksToProcessMutex);
-				if (!_queue->_tasksToProcess.isEmpty() && _queue->_tasksToProcess.front() == task) {
-					_queue->_tasksToProcess.pop_front();
-					someTasksLeft = !_queue->_tasksToProcess.isEmpty();
+				if (_queue->_taskInProcessId == task->id()) {
+					_queue->_taskInProcessId = TaskId();
+					someTasksLeft = !_queue->_tasksToProcess.empty();
 
 					QMutexLocker lockToFinish(&_queue->_tasksToFinishMutex);
-					emitTaskProcessed = _queue->_tasksToFinish.isEmpty();
-					_queue->_tasksToFinish.push_back(task);
+					emitTaskProcessed = _queue->_tasksToFinish.empty();
+					_queue->_tasksToFinish.push_back(std::move(task));
 				}
 			}
 			if (emitTaskProcessed) {
@@ -179,23 +232,47 @@ void TaskQueueWorker::onTaskAdded() {
 	_inTaskAdded = false;
 }
 
-FileLoadTask::FileLoadTask(const QString &filepath, std::unique_ptr<MediaInformation> information, SendMediaType type, const FileLoadTo &to, const QString &caption) : _id(rand_value<uint64>())
+SendingAlbum::SendingAlbum() : groupId(rand_value<uint64>()) {
+}
+
+FileLoadResult::FileLoadResult(
+	TaskId taskId,
+	uint64 id,
+	const FileLoadTo &to,
+	const TextWithTags &caption,
+	std::shared_ptr<SendingAlbum> album)
+: taskId(taskId)
+, id(id)
+, to(to)
+, album(std::move(album))
+, caption(caption) {
+}
+
+FileLoadTask::FileLoadTask(
+	const QString &filepath,
+	const QByteArray &content,
+	std::unique_ptr<FileMediaInformation> information,
+	SendMediaType type,
+	const FileLoadTo &to,
+	const TextWithTags &caption,
+	std::shared_ptr<SendingAlbum> album)
+: _id(rand_value<uint64>())
 , _to(to)
+, _album(std::move(album))
 , _filepath(filepath)
+, _content(content)
 , _information(std::move(information))
 , _type(type)
 , _caption(caption) {
 }
 
-FileLoadTask::FileLoadTask(const QByteArray &content, const QImage &image, SendMediaType type, const FileLoadTo &to, const QString &caption) : _id(rand_value<uint64>())
-, _to(to)
-, _content(content)
-, _image(image)
-, _type(type)
-, _caption(caption) {
-}
-
-FileLoadTask::FileLoadTask(const QByteArray &voice, int32 duration, const VoiceWaveform &waveform, const FileLoadTo &to, const QString &caption) : _id(rand_value<uint64>())
+FileLoadTask::FileLoadTask(
+	const QByteArray &voice,
+	int32 duration,
+	const VoiceWaveform &waveform,
+	const FileLoadTo &to,
+	const TextWithTags &caption)
+: _id(rand_value<uint64>())
 , _to(to)
 , _content(voice)
 , _duration(duration)
@@ -204,8 +281,11 @@ FileLoadTask::FileLoadTask(const QByteArray &voice, int32 duration, const VoiceW
 , _caption(caption) {
 }
 
-std::unique_ptr<FileLoadTask::MediaInformation> FileLoadTask::ReadMediaInformation(const QString &filepath, const QByteArray &content, const QString &filemime) {
-	auto result = std::make_unique<MediaInformation>();
+std::unique_ptr<FileMediaInformation> FileLoadTask::ReadMediaInformation(
+		const QString &filepath,
+		const QByteArray &content,
+		const QString &filemime) {
+	auto result = std::make_unique<FileMediaInformation>();
 	result->filemime = filemime;
 
 	if (CheckForSong(filepath, content, result)) {
@@ -219,7 +299,11 @@ std::unique_ptr<FileLoadTask::MediaInformation> FileLoadTask::ReadMediaInformati
 }
 
 template <typename Mimes, typename Extensions>
-bool FileLoadTask::CheckMimeOrExtensions(const QString &filepath, const QString &filemime, Mimes &mimes, Extensions &extensions) {
+bool FileLoadTask::CheckMimeOrExtensions(
+		const QString &filepath,
+		const QString &filemime,
+		Mimes &mimes,
+		Extensions &extensions) {
 	if (std::find(std::begin(mimes), std::end(mimes), filemime) != std::end(mimes)) {
 		return true;
 	}
@@ -231,7 +315,10 @@ bool FileLoadTask::CheckMimeOrExtensions(const QString &filepath, const QString 
 	return false;
 }
 
-bool FileLoadTask::CheckForSong(const QString &filepath, const QByteArray &content, std::unique_ptr<MediaInformation> &result) {
+bool FileLoadTask::CheckForSong(
+		const QString &filepath,
+		const QByteArray &content,
+		std::unique_ptr<FileMediaInformation> &result) {
 	static const auto mimes = {
 		qstr("audio/mp3"),
 		qstr("audio/m4a"),
@@ -261,7 +348,10 @@ bool FileLoadTask::CheckForSong(const QString &filepath, const QByteArray &conte
 	return true;
 }
 
-bool FileLoadTask::CheckForVideo(const QString &filepath, const QByteArray &content, std::unique_ptr<MediaInformation> &result) {
+bool FileLoadTask::CheckForVideo(
+		const QString &filepath,
+		const QByteArray &content,
+		std::unique_ptr<FileMediaInformation> &result) {
 	static const auto mimes = {
 		qstr("video/mp4"),
 		qstr("video/quicktime"),
@@ -292,7 +382,10 @@ bool FileLoadTask::CheckForVideo(const QString &filepath, const QByteArray &cont
 	return true;
 }
 
-bool FileLoadTask::CheckForImage(const QString &filepath, const QByteArray &content, std::unique_ptr<MediaInformation> &result) {
+bool FileLoadTask::CheckForImage(
+		const QString &filepath,
+		const QByteArray &content,
+		std::unique_ptr<FileMediaInformation> &result) {
 	auto animated = false;
 	auto image = ([&filepath, &content, &animated] {
 		if (!content.isEmpty()) {
@@ -302,11 +395,19 @@ bool FileLoadTask::CheckForImage(const QString &filepath, const QByteArray &cont
 		}
 		return QImage();
 	})();
+	return FillImageInformation(std::move(image), animated, result);
+}
+
+bool FileLoadTask::FillImageInformation(
+		QImage &&image,
+		bool animated,
+		std::unique_ptr<FileMediaInformation> &result) {
+	Expects(result != nullptr);
 
 	if (image.isNull()) {
 		return false;
 	}
-	auto media = Image();
+	auto media = FileMediaInformation::Image();
 	media.data = std::move(image);
 	media.animated = animated;
 	result->media = media;
@@ -316,7 +417,12 @@ bool FileLoadTask::CheckForImage(const QString &filepath, const QByteArray &cont
 void FileLoadTask::process() {
 	const auto stickerMime = qsl("image/webp");
 
-	_result = MakeShared<FileLoadResult>(_id, _to, _caption);
+	_result = std::make_shared<FileLoadResult>(
+		id(),
+		_id,
+		_to,
+		_caption,
+		_album);
 
 	QString filename, filemime;
 	qint64 filesize = 0;
@@ -331,7 +437,7 @@ void FileLoadTask::process() {
 	auto isVideo = false;
 	auto isVoice = (_type == SendMediaType::Audio);
 
-	auto fullimage = base::take(_image);
+	auto fullimage = QImage();
 	auto info = _filepath.isEmpty() ? QFileInfo() : QFileInfo(_filepath);
 	if (info.exists()) {
 		if (info.isDir()) {
@@ -342,15 +448,16 @@ void FileLoadTask::process() {
 		// Voice sending is supported only from memory for now.
 		// Because for voice we force mime type and don't read MediaInformation.
 		// For a real file we always read mime type and read MediaInformation.
-		t_assert(!isVoice);
+		Assert(!isVoice);
 
 		filesize = info.size();
 		filename = info.fileName();
 		if (!_information) {
-			_information = readMediaInformation(mimeTypeForFile(info).name());
+			_information = readMediaInformation(Core::MimeTypeForFile(info).name());
 		}
 		filemime = _information->filemime;
-		if (auto image = base::get_if<FileLoadTask::Image>(&_information->media)) {
+		if (auto image = base::get_if<FileMediaInformation::Image>(
+				&_information->media)) {
 			fullimage = base::take(image->data);
 			if (auto opaque = (filemime != stickerMime)) {
 				fullimage = Images::prepareOpaque(std::move(fullimage));
@@ -363,7 +470,13 @@ void FileLoadTask::process() {
 			filename = filedialogDefaultName(qsl("audio"), qsl(".ogg"), QString(), true);
 			filemime = "audio/ogg";
 		} else {
-			auto mimeType = mimeTypeForData(_content);
+			if (_information) {
+				if (auto image = base::get_if<FileMediaInformation::Image>(
+						&_information->media)) {
+					fullimage = base::take(image->data);
+				}
+			}
+			const auto mimeType = Core::MimeTypeForData(_content);
 			filemime = mimeType.name();
 			if (filemime != stickerMime) {
 				fullimage = Images::prepareOpaque(std::move(fullimage));
@@ -383,7 +496,8 @@ void FileLoadTask::process() {
 		}
 	} else {
 		if (_information) {
-			if (auto image = base::get_if<FileLoadTask::Image>(&_information->media)) {
+			if (auto image = base::get_if<FileMediaInformation::Image>(
+					&_information->media)) {
 				fullimage = base::take(image->data);
 			}
 		}
@@ -391,14 +505,14 @@ void FileLoadTask::process() {
 			if (_type == SendMediaType::Photo) {
 				if (ValidateThumbDimensions(fullimage.width(), fullimage.height())) {
 					filesize = -1; // Fill later.
-					filemime = mimeTypeForName("image/jpeg").name();
+					filemime = Core::MimeTypeForName("image/jpeg").name();
 					filename = filedialogDefaultName(qsl("image"), qsl(".jpg"), QString(), true);
 				} else {
 					_type = SendMediaType::File;
 				}
 			}
 			if (_type == SendMediaType::File) {
-				filemime = mimeTypeForName("image/png").name();
+				filemime = Core::MimeTypeForName("image/png").name();
 				filename = filedialogDefaultName(qsl("image"), qsl(".png"), QString(), true);
 				{
 					QBuffer buffer(&_content);
@@ -421,16 +535,17 @@ void FileLoadTask::process() {
 
 	QVector<MTPDocumentAttribute> attributes(1, MTP_documentAttributeFilename(MTP_string(filename)));
 
-	MTPPhotoSize thumbSize(MTP_photoSizeEmpty(MTP_string("")));
-	MTPPhoto photo(MTP_photoEmpty(MTP_long(0)));
-	MTPDocument document(MTP_documentEmpty(MTP_long(0)));
+	auto thumbSize = MTP_photoSizeEmpty(MTP_string(""));
+	auto photo = MTP_photoEmpty(MTP_long(0));
+	auto document = MTP_documentEmpty(MTP_long(0));
 
 	if (!isVoice) {
 		if (!_information) {
 			_information = readMediaInformation(filemime);
 			filemime = _information->filemime;
 		}
-		if (auto song = base::get_if<Song>(&_information->media)) {
+		if (auto song = base::get_if<FileMediaInformation::Song>(
+				&_information->media)) {
 			isSong = true;
 			auto flags = MTPDdocumentAttributeAudio::Flag::f_title | MTPDdocumentAttributeAudio::Flag::f_performer;
 			attributes.push_back(MTP_documentAttributeAudio(MTP_flags(flags), MTP_int(song->duration), MTP_string(song->title), MTP_string(song->performer), MTPstring()));
@@ -451,11 +566,12 @@ void FileLoadTask::process() {
 
 				thumbId = rand_value<uint64>();
 			}
-		} else if (auto video = base::get_if<Video>(&_information->media)) {
+		} else if (auto video = base::get_if<FileMediaInformation::Video>(
+				&_information->media)) {
 			isVideo = true;
 			auto coverWidth = video->thumbnail.width();
 			auto coverHeight = video->thumbnail.height();
-			if (video->isGifv) {
+			if (video->isGifv && !_album) {
 				attributes.push_back(MTP_documentAttributeAnimated());
 			}
 			auto flags = MTPDdocumentAttributeVideo::Flags(0);
@@ -504,7 +620,13 @@ void FileLoadTask::process() {
 					full.save(&buffer, "JPG", 87);
 				}
 
-				photo = MTP_photo(MTP_flags(0), MTP_long(_id), MTP_long(0), MTP_int(unixtime()), MTP_vector<MTPPhotoSize>(photoSizes));
+				photo = MTP_photo(
+					MTP_flags(0),
+					MTP_long(_id),
+					MTP_long(0),
+					MTP_bytes(QByteArray()),
+					MTP_int(unixtime()),
+					MTP_vector<MTPPhotoSize>(photoSizes));
 
 				if (filesize < 0) {
 					filesize = _result->filesize = filedata.size();
@@ -512,8 +634,14 @@ void FileLoadTask::process() {
 			}
 
 			QByteArray thumbFormat = "JPG";
-			int32 thumbQuality = 87;
-			if (!isAnimation && filemime == stickerMime && w > 0 && h > 0 && w <= StickerMaxSize && h <= StickerMaxSize && filesize < StickerInMemory) {
+			auto thumbQuality = 87;
+			if (!isAnimation
+				&& filemime == stickerMime
+				&& w > 0
+				&& h > 0
+				&& w <= StickerMaxSize
+				&& h <= StickerMaxSize
+				&& filesize < Storage::kMaxStickerInMemory) {
 				attributes.push_back(MTP_documentAttributeSticker(MTP_flags(0), MTP_string(""), MTP_inputStickerSetEmpty(), MTPMaskCoords()));
 				thumbFormat = "webp";
 				thumbname = qsl("thumb.webp");
@@ -533,13 +661,35 @@ void FileLoadTask::process() {
 		}
 	}
 
+	if (_type == SendMediaType::Photo && photo.type() == mtpc_photoEmpty) {
+		_type = SendMediaType::File;
+	}
+
 	if (isVoice) {
 		auto flags = MTPDdocumentAttributeAudio::Flag::f_voice | MTPDdocumentAttributeAudio::Flag::f_waveform;
 		attributes[0] = MTP_documentAttributeAudio(MTP_flags(flags), MTP_int(_duration), MTPstring(), MTPstring(), MTP_bytes(documentWaveformEncode5bit(_waveform)));
 		attributes.resize(1);
-		document = MTP_document(MTP_long(_id), MTP_long(0), MTP_int(unixtime()), MTP_string(filemime), MTP_int(filesize), thumbSize, MTP_int(MTP::maindc()), MTP_int(0), MTP_vector<MTPDocumentAttribute>(attributes));
+		document = MTP_document(
+			MTP_long(_id),
+			MTP_long(0),
+			MTP_bytes(QByteArray()),
+			MTP_int(unixtime()),
+			MTP_string(filemime),
+			MTP_int(filesize),
+			thumbSize,
+			MTP_int(MTP::maindc()),
+			MTP_vector<MTPDocumentAttribute>(attributes));
 	} else if (_type != SendMediaType::Photo) {
-		document = MTP_document(MTP_long(_id), MTP_long(0), MTP_int(unixtime()), MTP_string(filemime), MTP_int(filesize), thumbSize, MTP_int(MTP::maindc()), MTP_int(0), MTP_vector<MTPDocumentAttribute>(attributes));
+		document = MTP_document(
+			MTP_long(_id),
+			MTP_long(0),
+			MTP_bytes(QByteArray()),
+			MTP_int(unixtime()),
+			MTP_string(filemime),
+			MTP_int(filesize),
+			thumbSize,
+			MTP_int(MTP::maindc()),
+			MTP_vector<MTPDocumentAttribute>(attributes));
 		_type = SendMediaType::File;
 	}
 
@@ -562,13 +712,31 @@ void FileLoadTask::process() {
 }
 
 void FileLoadTask::finish() {
-	if (!_result || !_result->filesize) {
-		Ui::show(Box<InformBox>(lng_send_image_empty(lt_name, _filepath)), KeepOtherLayers);
-	} else if (_result->filesize == -1) { // dir
-		Ui::show(Box<InformBox>(lng_send_folder(lt_name, QFileInfo(_filepath).dir().dirName())), KeepOtherLayers);
+	if (!_result || !_result->filesize || _result->filesize < 0) {
+		Ui::show(
+			Box<InformBox>(lng_send_image_empty(lt_name, _filepath)),
+			LayerOption::KeepOther);
+		removeFromAlbum();
 	} else if (_result->filesize > App::kFileSizeLimit) {
-		Ui::show(Box<InformBox>(lng_send_image_too_large(lt_name, _filepath)), KeepOtherLayers);
+		Ui::show(
+			Box<InformBox>(
+				lng_send_image_too_large(lt_name, _filepath)),
+			LayerOption::KeepOther);
+		removeFromAlbum();
 	} else if (App::main()) {
 		App::main()->onSendFileConfirm(_result);
 	}
+}
+
+void FileLoadTask::removeFromAlbum() {
+	if (!_album) {
+		return;
+	}
+	const auto proj = [](const SendingAlbum::Item &item) {
+		return item.taskId;
+	};
+	const auto it = ranges::find(_album->items, id(), proj);
+	Assert(it != _album->items.end());
+
+	_album->items.erase(it);
 }

@@ -1,41 +1,32 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "core/basic_types.h"
 #include "storage/file_download.h"
+#include "storage/cache/storage_cache_database.h"
+#include "storage/localimageloader.h"
 #include "auth_session.h"
+
+namespace Storage {
+class EncryptionKey;
+} // namespace Storage
 
 namespace Window {
 namespace Theme {
-struct Cached;
+struct Saved;
 } // namespace Theme
 } // namespace Window
 
-namespace Local {
+namespace Export {
+struct Settings;
+} // namespace Export
 
-struct StoredAuthSession {
-	AuthSessionData data;
-	float64 dialogsWidthRatio;
-};
+namespace Local {
 
 void start();
 void finish();
@@ -44,6 +35,9 @@ void readSettings();
 void writeSettings();
 void writeUserSettings();
 void writeMtpData();
+
+void writeAutoupdatePrefix(const QString &prefix);
+QString readAutoupdatePrefix();
 
 void reset();
 
@@ -110,29 +104,10 @@ bool hasDraft(const PeerId &peer);
 void writeFileLocation(MediaKey location, const FileLocation &local);
 FileLocation readFileLocation(MediaKey location, bool check = true);
 
-void writeImage(const StorageKey &location, const ImagePtr &img);
-void writeImage(const StorageKey &location, const StorageImageSaved &jpeg, bool overwrite = true);
-TaskId startImageLoad(const StorageKey &location, mtpFileLoader *loader);
-int32 hasImages();
-qint64 storageImagesSize();
-
-void writeStickerImage(const StorageKey &location, const QByteArray &data, bool overwrite = true);
-TaskId startStickerImageLoad(const StorageKey &location, mtpFileLoader *loader);
-bool willStickerImageLoad(const StorageKey &location);
-bool copyStickerImage(const StorageKey &oldLocation, const StorageKey &newLocation);
-int32 hasStickers();
-qint64 storageStickersSize();
-
-void writeAudio(const StorageKey &location, const QByteArray &data, bool overwrite = true);
-TaskId startAudioLoad(const StorageKey &location, mtpFileLoader *loader);
-bool copyAudio(const StorageKey &oldLocation, const StorageKey &newLocation);
-int32 hasAudios();
-qint64 storageAudiosSize();
-
-void writeWebFile(const QString &url, const QByteArray &data, bool overwrite = true);
-TaskId startWebFileLoad(const QString &url, webFileLoader *loader);
-int32 hasWebFiles();
-qint64 storageWebFilesSize();
+QString cachePath();
+Storage::EncryptionKey cacheKey();
+Storage::Cache::Database::Settings cacheSettings();
+void updateCacheSettings(Storage::Cache::Database::SettingsUpdate &update);
 
 void countVoiceWaveform(DocumentData *document);
 
@@ -141,13 +116,16 @@ void cancelTask(TaskId id);
 void writeInstalledStickers();
 void writeFeaturedStickers();
 void writeRecentStickers();
+void writeFavedStickers();
 void writeArchivedStickers();
 void readInstalledStickers();
 void readFeaturedStickers();
 void readRecentStickers();
+void readFavedStickers();
 void readArchivedStickers();
 int32 countStickersHash(bool checkOutdatedInfo = false);
 int32 countRecentStickersHash();
+int32 countFavedStickersHash();
 int32 countFeaturedStickersHash();
 
 void writeSavedGifs();
@@ -157,23 +135,29 @@ int32 countSavedGifsHash();
 void writeBackground(int32 id, const QImage &img);
 bool readBackground();
 
-void writeTheme(const QString &pathRelative, const QString &pathAbsolute, const QByteArray &content, const Window::Theme::Cached &cache);
+void writeTheme(const Window::Theme::Saved &saved);
 void clearTheme();
-bool hasTheme();
-QString themeAbsolutePath();
-QString themePaletteAbsolutePath();
 bool copyThemeColorsToPalette(const QString &file);
+Window::Theme::Saved readThemeAfterSwitch();
 
 void writeLangPack();
 
 void writeRecentHashtagsAndBots();
 void readRecentHashtagsAndBots();
+void saveRecentSentHashtags(const QString &text);
+void saveRecentSearchHashtags(const QString &text);
+
+void WriteExportSettings(const Export::Settings &settings);
+Export::Settings ReadExportSettings();
 
 void addSavedPeer(PeerData *peer, const QDateTime &position);
 void removeSavedPeer(PeerData *peer);
 void readSavedPeers();
 
 void writeReportSpamStatuses();
+
+void writeSelf();
+void readSelf(const QByteArray &serialized, int32 streamVersion);
 
 void makeBotTrusted(UserData *bot);
 bool isBotTrusted(UserData *bot);

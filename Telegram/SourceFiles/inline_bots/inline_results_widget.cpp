@@ -1,25 +1,14 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "inline_bots/inline_results_widget.h"
 
+#include "data/data_photo.h"
+#include "data/data_document.h"
 #include "styles/style_chat_helpers.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/shadow.h"
@@ -38,6 +27,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/labels.h"
 #include "observer_peer.h"
+#include "history/view/history_view_cursor_state.h"
 
 namespace InlineBots {
 namespace Layout {
@@ -48,7 +38,7 @@ constexpr auto kInlineBotRequestDelay = 400;
 
 } // namespace
 
-Inner::Inner(QWidget *parent, gsl::not_null<Window::Controller*> controller) : TWidget(parent)
+Inner::Inner(QWidget *parent, not_null<Window::Controller*> controller) : TWidget(parent)
 , _controller(controller) {
 	resize(st::emojiPanWidth - st::emojiScroll.width - st::buttonRadius, st::emojiPanMinHeight);
 
@@ -61,7 +51,7 @@ Inner::Inner(QWidget *parent, gsl::not_null<Window::Controller*> controller) : T
 	_updateInlineItems.setSingleShot(true);
 	connect(&_updateInlineItems, SIGNAL(timeout()), this, SLOT(onUpdateInlineItems()));
 
-	subscribe(AuthSession::CurrentDownloaderTaskFinished(), [this] {
+	subscribe(Auth().downloaderTaskFinished(), [this] {
 		update();
 	});
 	subscribe(controller->gifPauseLevelChanged(), [this] {
@@ -80,7 +70,9 @@ Inner::Inner(QWidget *parent, gsl::not_null<Window::Controller*> controller) : T
 	}));
 }
 
-void Inner::setVisibleTopBottom(int visibleTop, int visibleBottom) {
+void Inner::visibleTopBottomUpdated(
+		int visibleTop,
+		int visibleBottom) {
 	_visibleBottom = visibleBottom;
 	if (_visibleTop != visibleTop) {
 		_visibleTop = visibleTop;
@@ -90,7 +82,7 @@ void Inner::setVisibleTopBottom(int visibleTop, int visibleBottom) {
 
 void Inner::checkRestrictedPeer() {
 	if (auto megagroup = _inlineQueryPeer ? _inlineQueryPeer->asMegagroup() : nullptr) {
-		if (megagroup->restrictedRights().is_send_inline()) {
+		if (megagroup->restricted(ChannelRestriction::f_send_inline)) {
 			if (!_restrictedLabel) {
 				_restrictedLabel.create(this, lang(lng_restricted_send_inline), Ui::FlatLabel::InitType::Simple, st::stickersRestrictedLabel);
 				_restrictedLabel->show();
@@ -120,6 +112,8 @@ bool Inner::isRestrictedView() {
 int Inner::countHeight() {
 	if (isRestrictedView()) {
 		return st::stickerPanPadding + _restrictedLabel->height() + st::stickerPanPadding;
+	} else if (_rows.isEmpty() && !_switchPmButton) {
+		return st::stickerPanPadding + st::normalFont->height + st::stickerPanPadding;
 	}
 	auto result = st::stickerPanPadding;
 	if (_switchPmButton) {
@@ -220,7 +214,7 @@ void Inner::mouseReleaseEvent(QMouseEvent *e) {
 		return;
 	}
 
-	if (dynamic_cast<InlineBots::Layout::SendClickHandler*>(activated.data())) {
+	if (dynamic_cast<InlineBots::Layout::SendClickHandler*>(activated.get())) {
 		int row = _selected / MatrixRowShift, column = _selected % MatrixRowShift;
 		selectInlineResult(row, column);
 	} else {
@@ -262,7 +256,7 @@ void Inner::enterFromChildEvent(QEvent *e, QWidget *child) {
 void Inner::clearSelection() {
 	if (_selected >= 0) {
 		int srow = _selected / MatrixRowShift, scol = _selected % MatrixRowShift;
-		t_assert(srow >= 0 && srow < _rows.size() && scol >= 0 && scol < _rows.at(srow).items.size());
+		Assert(srow >= 0 && srow < _rows.size() && scol >= 0 && scol < _rows.at(srow).items.size());
 		ClickHandler::clearActive(_rows.at(srow).items.at(scol));
 		setCursor(style::cur_default);
 	}
@@ -375,7 +369,7 @@ void Inner::deleteUnusedInlineLayouts() {
 
 Inner::Row &Inner::layoutInlineRow(Row &row, int32 sumWidth) {
 	auto count = int(row.items.size());
-	t_assert(count <= kInlineItemsMaxPerRow);
+	Assert(count <= kInlineItemsMaxPerRow);
 
 	// enumerate items in the order of growing maxWidth()
 	// for that sort item indices by maxWidth()
@@ -428,7 +422,7 @@ void Inner::refreshSwitchPmButton(const CacheEntry *entry) {
 		_switchPmStartToken.clear();
 	} else {
 		if (!_switchPmButton) {
-			_switchPmButton.create(this, base::lambda<QString()>(), st::switchPmButton);
+			_switchPmButton.create(this, Fn<QString()>(), st::switchPmButton);
 			_switchPmButton->show();
 			_switchPmButton->setTextTransform(Ui::RoundButton::TextTransform::NoTransform);
 			connect(_switchPmButton, SIGNAL(clicked()), this, SLOT(onSwitchPm()));
@@ -449,7 +443,7 @@ int Inner::refreshInlineRows(PeerData *queryPeer, UserData *bot, const CacheEntr
 	_inlineBot = bot;
 	_inlineQueryPeer = queryPeer;
 	refreshSwitchPmButton(entry);
-	auto clearResults = [this, entry]() {
+	auto clearResults = [&] {
 		if (!entry) {
 			return true;
 		}
@@ -470,7 +464,7 @@ int Inner::refreshInlineRows(PeerData *queryPeer, UserData *bot, const CacheEntr
 
 	clearSelection();
 
-	t_assert(_inlineBot != 0);
+	Assert(_inlineBot != 0);
 
 	auto count = int(entry->results.size());
 	auto from = validateExistingInlineRows(entry->results);
@@ -588,7 +582,7 @@ bool Inner::inlineItemVisible(const ItemBase *layout) {
 	}
 
 	int row = position / MatrixRowShift, col = position % MatrixRowShift;
-	t_assert((row < _rows.size()) && (col < _rows[row].items.size()));
+	Assert((row < _rows.size()) && (col < _rows[row].items.size()));
 
 	auto &inlineItems = _rows[row].items;
 	int top = st::stickerPanPadding;
@@ -597,6 +591,10 @@ bool Inner::inlineItemVisible(const ItemBase *layout) {
 	}
 
 	return (top < _visibleBottom) && (top + _rows[row].items[col]->height() > _visibleTop);
+}
+
+Data::FileOrigin Inner::inlineItemFileOrigin() {
+	return Data::FileOrigin();
 }
 
 void Inner::updateSelected() {
@@ -615,14 +613,14 @@ void Inner::updateSelected() {
 	int row = -1, col = -1, sel = -1;
 	ClickHandlerPtr lnk;
 	ClickHandlerHost *lnkhost = nullptr;
-	HistoryCursorState cursor = HistoryDefaultCursorState;
+	HistoryView::CursorState cursor = HistoryView::CursorState::None;
 	if (sy >= 0) {
 		row = 0;
 		for (int rows = _rows.size(); row < rows; ++row) {
-			if (sy < _rows.at(row).height) {
+			if (sy < _rows[row].height) {
 				break;
 			}
-			sy -= _rows.at(row).height;
+			sy -= _rows[row].height;
 		}
 	}
 	if (sx >= 0 && row >= 0 && row < _rows.size()) {
@@ -640,8 +638,12 @@ void Inner::updateSelected() {
 		}
 		if (col < inlineItems.size()) {
 			sel = row * MatrixRowShift + col;
-			inlineItems.at(col)->getState(lnk, cursor, QPoint(sx, sy));
-			lnkhost = inlineItems.at(col);
+			auto result = inlineItems[col]->getState(
+				QPoint(sx, sy),
+				HistoryView::StateRequest());
+			lnk = result.link;
+			cursor = result.cursor;
+			lnkhost = inlineItems[col];
 		} else {
 			row = col = -1;
 		}
@@ -652,22 +654,24 @@ void Inner::updateSelected() {
 	int scol = (_selected >= 0) ? (_selected % MatrixRowShift) : -1;
 	if (_selected != sel) {
 		if (srow >= 0 && scol >= 0) {
-			t_assert(srow >= 0 && srow < _rows.size() && scol >= 0 && scol < _rows.at(srow).items.size());
+			Assert(srow >= 0 && srow < _rows.size() && scol >= 0 && scol < _rows.at(srow).items.size());
 			_rows[srow].items[scol]->update();
 		}
 		_selected = sel;
 		if (row >= 0 && col >= 0) {
-			t_assert(row >= 0 && row < _rows.size() && col >= 0 && col < _rows.at(row).items.size());
+			Assert(row >= 0 && row < _rows.size() && col >= 0 && col < _rows.at(row).items.size());
 			_rows[row].items[col]->update();
 		}
 		if (_previewShown && _selected >= 0 && _pressed != _selected) {
 			_pressed = _selected;
 			if (row >= 0 && col >= 0) {
 				auto layout = _rows.at(row).items.at(col);
-				if (auto previewDocument = layout->getPreviewDocument()) {
-					Ui::showMediaPreview(previewDocument);
+				if (const auto previewDocument = layout->getPreviewDocument()) {
+					Ui::showMediaPreview(
+						Data::FileOrigin(),
+						previewDocument);
 				} else if (auto previewPhoto = layout->getPreviewPhoto()) {
-					Ui::showMediaPreview(previewPhoto);
+					Ui::showMediaPreview(Data::FileOrigin(), previewPhoto);
 				}
 			}
 		}
@@ -683,11 +687,11 @@ void Inner::onPreview() {
 	int row = _pressed / MatrixRowShift, col = _pressed % MatrixRowShift;
 	if (row < _rows.size() && col < _rows.at(row).items.size()) {
 		auto layout = _rows.at(row).items.at(col);
-		if (auto previewDocument = layout->getPreviewDocument()) {
-			Ui::showMediaPreview(previewDocument);
+		if (const auto previewDocument = layout->getPreviewDocument()) {
+			Ui::showMediaPreview(Data::FileOrigin(), previewDocument);
 			_previewShown = true;
-		} else if (auto previewPhoto = layout->getPreviewPhoto()) {
-			Ui::showMediaPreview(previewPhoto);
+		} else if (const auto previewPhoto = layout->getPreviewPhoto()) {
+			Ui::showMediaPreview(Data::FileOrigin(), previewPhoto);
 			_previewShown = true;
 		}
 	}
@@ -711,7 +715,7 @@ void Inner::onSwitchPm() {
 
 } // namespace internal
 
-Widget::Widget(QWidget *parent, gsl::not_null<Window::Controller*> controller) : TWidget(parent)
+Widget::Widget(QWidget *parent, not_null<Window::Controller*> controller) : TWidget(parent)
 , _controller(controller)
 , _contentMaxHeight(st::emojiPanMaxHeight)
 , _contentHeight(_contentMaxHeight)
@@ -811,7 +815,7 @@ void Widget::paintEvent(QPaintEvent *e) {
 	}
 
 	if (showAnimating) {
-		t_assert(_showAnimation != nullptr);
+		Assert(_showAnimation != nullptr);
 		if (auto opacity = _a_opacity.current(_hiding ? 0. : 1.)) {
 			_showAnimation->paintFrame(p, 0, 0, width(), _a_show.current(1.), opacity);
 		}
@@ -868,7 +872,7 @@ void Widget::prepareCache() {
 	auto showAnimation = base::take(_a_show);
 	auto showAnimationData = base::take(_showAnimation);
 	showChildren();
-	_cache = myGrab(this);
+	_cache = Ui::GrabWidget(this);
 	_showAnimation = base::take(showAnimationData);
 	_a_show = base::take(showAnimation);
 	if (_a_show.animating()) {
@@ -905,7 +909,7 @@ void Widget::startShowAnimation() {
 }
 
 QImage Widget::grabForPanelAnimation() {
-	myEnsureResized(this);
+	Ui::SendPendingMoveResizeEvents(this);
 	auto result = QImage(size() * cIntRetinaFactor(), QImage::Format_ARGB32_Premultiplied);
 	result.setDevicePixelRatio(cRetinaFactor());
 	result.fill(Qt::transparent);
@@ -1017,6 +1021,8 @@ void Widget::inlineResultsDone(const MTPmessages_BotResults &result) {
 	auto adding = (it != _inlineCache.cend());
 	if (result.type() == mtpc_messages_botResults) {
 		auto &d = result.c_messages_botResults();
+		App::feedUsers(d.vusers);
+
 		auto &v = d.vresults.v;
 		auto queryId = d.vquery_id.v;
 
@@ -1062,13 +1068,7 @@ void Widget::queryInlineBot(UserData *bot, PeerData *peer, QString query) {
 		inlineBotChanged();
 		_inlineBot = bot;
 		force = true;
-		//if (_inlineBot->isBotInlineGeo()) {
-		//	Ui::show(Box<InformBox>(lang(lng_bot_inline_geo_unavailable)));
-		//}
 	}
-	//if (_inlineBot && _inlineBot->isBotInlineGeo()) {
-	//	return;
-	//}
 
 	if (_inlineQuery != query || force) {
 		if (_inlineRequestId) {
@@ -1095,7 +1095,9 @@ void Widget::onInlineRequest() {
 	auto it = _inlineCache.find(_inlineQuery);
 	if (it != _inlineCache.cend()) {
 		nextOffset = it->second->nextOffset;
-		if (nextOffset.isEmpty()) return;
+		if (nextOffset.isEmpty()) {
+			return;
+		}
 	}
 	Notify::inlineBotRequesting(true);
 	_inlineRequestId = request(MTPmessages_GetInlineBotResults(MTP_flags(0), _inlineBot->inputUser, _inlineQueryPeer->input, MTPInputGeoPoint(), MTP_string(_inlineQuery), MTP_string(nextOffset))).done([this](const MTPmessages_BotResults &result, mtpRequestId requestId) {

@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 using "basic.style";
 
@@ -88,7 +75,6 @@ boxLayerTitlePosition: point(23px, 16px);
 boxLayerTitleHeight: 56px;
 boxLayerTitleAdditionalSkip: 9px;
 boxLayerTitleAdditionalFont: normalFont;
-boxLayerTitleShadow: shadowFg;
 boxLayerScroll: defaultSolidScroll;
 
 boxTopMargin: 6px;
@@ -127,9 +113,15 @@ boxMediumSkip: 20px;
 boxButtonPadding: margins(8px, 12px, 13px, 12px);
 boxLayerButtonPadding: margins(8px, 8px, 8px, 8px);
 boxLabel: FlatLabel(defaultFlatLabel) {
-	width: 285px;
+	minWidth: 274px;
 	align: align(topleft);
 	style: boxLabelStyle;
+}
+boxDividerLabel: FlatLabel(boxLabel) {
+	minWidth: 245px;
+	align: align(topleft);
+	textFg: windowSubTextFg;
+	style: defaultTextStyle;
 }
 
 countryRowHeight: 36px;
@@ -160,7 +152,7 @@ cropMinSize: 20px;
 
 confirmInviteTitle: FlatLabel(defaultFlatLabel) {
 	align: align(center);
-	width: 320px;
+	minWidth: 320px;
 	maxHeight: 24px;
 	textFg: windowBoldFg;
 	style: TextStyle(defaultTextStyle) {
@@ -171,7 +163,7 @@ confirmInviteTitle: FlatLabel(defaultFlatLabel) {
 }
 confirmInviteStatus: FlatLabel(boxLabel) {
 	align: align(center);
-	width: 320px;
+	minWidth: 320px;
 	maxHeight: 20px;
 	textFg: windowSubTextFg;
 }
@@ -184,13 +176,13 @@ confirmInviteUserPhotoSize: 56px;
 confirmInviteUserPhotoTop: 166px;
 confirmInviteUserName: FlatLabel(defaultFlatLabel) {
 	align: align(center);
-	width: 66px;
+	minWidth: 66px;
 	maxHeight: 20px;
 }
 confirmInviteUserNameTop: 227px;
 
 confirmPhoneAboutLabel: FlatLabel(defaultFlatLabel) {
-	width: 282px;
+	minWidth: 282px;
 }
 confirmPhoneCodeField: InputField(defaultInputField) {
 }
@@ -200,16 +192,16 @@ revokePublicLinkStatusPalette: TextPalette(defaultTextPalette) {
 }
 aboutRevokePublicLabel: FlatLabel(defaultFlatLabel) {
 	align: align(topleft);
-	width: 320px;
+	minWidth: 320px;
 }
 editBioCountdownLabel: FlatLabel(defaultFlatLabel) {
 	style: boxTextStyle;
 	textFg: windowSubTextFg;
 }
 
-contactUserIcon: icon {{ "add_contact_user", menuIconFg }};
-contactPhoneIcon: icon {{ "add_contact_phone", menuIconFg }};
-contactIconTop: 28px;
+contactUserIcon: icon {{ "settings_name", menuIconFg }};
+contactPhoneIcon: icon {{ "settings_phone_number", menuIconFg }};
+contactIconPosition: point(-5px, 23px);
 
 contactsAddIconAbove: icon {{ "contacts_add", activeButtonFg, point(18px, 18px) }};
 contactsAdd: TwoIconButton {
@@ -312,17 +304,23 @@ contactsMultiSelect: MultiSelect {
 	fieldCancel: contactsSearchCancel;
 	fieldCancelSkip: 40px;
 }
+contactsPhotoCheckIcon: icon {{
+	"default_checkbox_check",
+	windowFgActive,
+	point(3px, 6px)
+}};
+contactsPhotoCheck: RoundCheckbox(defaultRoundCheckbox) {
+	size: 20px;
+	sizeSmall: 0.3;
+	check: contactsPhotoCheckIcon;
+}
 contactsPhotoCheckbox: RoundImageCheckbox {
 	imageRadius: 21px;
 	imageSmallRadius: 18px;
 	selectWidth: 2px;
 	selectFg: windowBgActive;
 	selectDuration: 150;
-	check: RoundCheckbox(defaultRoundCheckbox) {
-		size: 20px;
-		sizeSmall: 0.3;
-		check: icon {{ "default_checkbox_check", windowFgActive, point(3px, 6px) }};
-	}
+	check: contactsPhotoCheck;
 }
 contactsPhotoDisabledCheckFg: menuIconFg;
 contactsNameCheckedFg: windowActiveTextFg;
@@ -333,7 +331,58 @@ contactsMarginBottom: 4px;
 membersMarginTop: 10px;
 membersMarginBottom: 10px;
 
-localStorageBoxSkip: 10px;
+peerListBox: PeerList(defaultPeerList) {
+	padding: margins(
+		0px,
+		membersMarginTop,
+		0px,
+		membersMarginBottom);
+	item: PeerListItem(defaultPeerListItem) {
+		height: 56px;
+		photoSize: contactsPhotoSize;
+		photoPosition: point(16px, 7px);
+		namePosition: point(74px, 9px);
+		statusPosition: point(74px, 30px);
+		button: OutlineButton(defaultPeerListButton) {
+			textBg: contactsBg;
+			textBgOver: contactsBgOver;
+			ripple: contactsRipple;
+		}
+		statusFg: contactsStatusFg;
+		statusFgOver: contactsStatusFgOver;
+		statusFgActive: contactsStatusFgOnline;
+	}
+}
+
+localStorageRowHeight: 50px;
+localStorageRowPadding: margins(23px, 5px, 20px, 5px);
+localStorageRowTitle: FlatLabel(defaultFlatLabel) {
+	textFg: windowBoldFg;
+	maxHeight: 20px;
+	style: TextStyle(defaultTextStyle) {
+		font: font(14px semibold);
+		linkFont: font(14px semibold);
+		linkFontOver: font(14px semibold);
+	}
+}
+localStorageRowSize: FlatLabel(defaultFlatLabel) {
+	textFg: contactsStatusFg;
+	maxHeight: 20px;
+	style: TextStyle(defaultTextStyle) {
+		font: font(14px);
+		linkFont: font(14px);
+		linkFontOver: font(14px);
+	}
+}
+localStorageClear: defaultBoxButton;
+localStorageLimitLabel: LabelSimple(defaultLabelSimple) {
+	font: boxTextFont;
+}
+localStorageLimitLabelMargin: margins(23px, 10px, 20px, 5px);
+localStorageLimitSlider: MediaSlider(defaultContinuousSlider) {
+	seekSize: size(15px, 15px);
+}
+localStorageLimitMargin: margins(23px, 5px, 20px, 10px);
 
 shareRowsTop: 12px;
 shareRowHeight: 108px;
@@ -354,13 +403,9 @@ shareColumnSkip: 6px;
 shareActivateDuration: 150;
 shareScrollDuration: 300;
 
-notificationsBoxHeight: 420px;
-notificationsBoxMonitorTop: 63px;
 notificationsBoxMonitor: icon {{ "monitor", notificationsBoxMonitorFg }};
 notificationsBoxScreenTop: 10px;
 notificationsBoxScreenSize: size(280px, 160px);
-notificationsBoxCountLabelTop: 80px;
-notificationsBoxCountTop: 30px;
 
 notificationsSampleSkip: 5px;
 notificationsSampleTopSkip: 5px;
@@ -372,7 +417,7 @@ notificationSampleSize: size(64px, 16px);
 
 membersAboutLimitPadding: margins(0px, 12px, 0px, 12px);
 membersAbout: FlatLabel(defaultFlatLabel) {
-	width: 332px;
+	minWidth: 240px;
 	textFg: membersAboutLimitFg;
 	align: align(top);
 	style: boxLabelStyle;
@@ -435,11 +480,6 @@ newGroupLinkPadding: margins(4px, 27px, 4px, 21px);
 newGroupLinkTop: 3px;
 newGroupLinkFont: font(16px);
 
-newGroupPhotoSize: 76px;
-newGroupPhotoIcon: icon {{ "new_chat_photo", activeButtonFg }};
-newGroupPhotoIconPosition: point(23px, 25px);
-newGroupPhotoDuration: 150;
-
 newGroupNamePosition: point(27px, 5px);
 
 newGroupDescriptionPadding: margins(0px, 13px, 0px, 4px);
@@ -468,7 +508,7 @@ aboutVersionLink: LinkButton(defaultLinkButton) {
 aboutTextTop: 34px;
 aboutSkip: 14px;
 aboutLabel: FlatLabel(defaultFlatLabel) {
-	width: 330px;
+	minWidth: 330px;
 	align: align(topleft);
 	style: TextStyle(defaultTextStyle) {
 		lineHeight: 22px;
@@ -533,14 +573,24 @@ calendarPreviousDisabled: icon {{ "title_back", menuIconFg }};
 calendarNext: IconButton(calendarPrevious) {
 	icon: icon {{ "title_back-flip_horizontal", boxTitleFg }};
 }
+CalendarSizes {
+	width: pixels;
+	daysHeight: pixels;
+	cellSize: size;
+	cellInner: pixels;
+	padding: margins;
+}
 calendarNextDisabled: icon {{ "title_back-flip_horizontal", menuIconFg }};
 calendarTitleFont: boxTitleFont;
+defaultCalendarSizes: CalendarSizes {
+	width: boxWideWidth;
+	daysHeight: 32px;
+	cellSize: size(48px, 40px);
+	cellInner: 34px;
+	padding: margins(14px, 15px, 14px, 10px);
+}
 calendarDaysFont: normalFont;
 calendarDaysFg: boxTitleAdditionalFg;
-calendarDaysHeight: 32px;
-calendarCellSize: size(48px, 40px);
-calendarCellInner: 34px;
-calendarPadding: margins(14px, 15px, 14px, 10px);
 calendarScroll: backgroundScroll;
 
 passcodeTextStyle: TextStyle(defaultTextStyle) {
@@ -575,40 +625,19 @@ colorValueInput: InputField(defaultInputField) {
 colorResultInput: InputField(colorValueInput) {
 }
 
-editPrivacyOptionMargin: margins(23px, 14px, 21px, 0px);
-editPrivacyPadding: margins(23px, 0px, 21px, 0px);
-editPrivacyWarningPadding: margins(23px, 14px, 21px, 0px);
-editPrivacyTitle: FlatLabel(defaultFlatLabel) {
-	width: 320px;
-	textFg: boxTitleFg;
-	maxHeight: 56px;
-	margin: margins(0px, 20px, 0px, 13px);
-	style: TextStyle(defaultTextStyle) {
-		font: boxTitleFont;
-		linkFont: boxTitleFont;
-		linkFontOver: boxTitleFont;
-	}
-}
-editPrivacyLabel: FlatLabel(defaultFlatLabel) {
-	width: 320px;
-	textFg: membersAboutLimitFg;
-	style: defaultTextStyle;
-}
-editPrivacyLinkMargin: margins(0px, 0px, 0px, 8px);
-
 changePhoneIcon: icon {
 	{ "phone_simcard_from", changePhoneSimcardFrom },
 	{ "phone_simcard_migrate", changePhoneSimcardTo, point(30px, 11px) },
 	{ "phone_simcard_to", changePhoneSimcardTo, point(78px, 0px) }
 };
 changePhoneDescription: FlatLabel(boxLabel) {
-	width: 332px;
+	minWidth: 332px;
 	align: align(top);
 }
 changePhoneIconTop: 20px;
 changePhoneDescriptionTop: 96px;
 changePhoneLabel: FlatLabel(defaultFlatLabel) {
-	width: 275px;
+	minWidth: 275px;
 	textFg: windowSubTextFg;
 }
 changePhoneError: FlatLabel(changePhoneLabel) {
@@ -627,6 +656,7 @@ adminLogFilterCheckbox: Checkbox(defaultBoxCheckbox) {
 adminLogFilterSkip: 32px;
 adminLogFilterUserCheckbox: Checkbox(defaultBoxCheckbox) {
 	margin: margins(8px, 6px, 8px, 6px);
+	checkPosition: point(8px, 6px);
 }
 
 rightsCheckbox: Checkbox(defaultBoxCheckbox) {
@@ -641,12 +671,12 @@ rightsToggle: Toggle(defaultToggle) {
 	stroke: 2px;
 	duration: 120;
 }
-rightsDividerHeight: 11px;
+rightsDividerHeight: 10px;
 rightsHeaderMargin: margins(23px, 20px, 23px, 8px);
 rightsToggleMargin: margins(23px, 8px, 23px, 8px);
 rightsAboutMargin: margins(23px, 8px, 23px, 8px);
-rightsPhotoButton: PeerAvatarButton {
-	size: 60px;
+rightsPhotoButton: UserpicButton(defaultUserpicButton) {
+	size: size(60px, 60px);
 	photoSize: 60px;
 }
 rightsPhotoMargin: margins(20px, 0px, 15px, 18px);
@@ -667,15 +697,117 @@ rightsHeaderLabel: FlatLabel(boxLabel) {
 }
 rightsUntilMargin: margins(0px, 8px, 0px, 0px);
 
-mutePhotoButton: PeerAvatarButton {
-	size: 40px;
+mutePhotoButton: UserpicButton(defaultUserpicButton) {
+	size: size(40px, 40px);
 	photoSize: 40px;
 }
 muteChatTitle: FlatLabel(boxLabel) {
-	width: 235px;
+	minWidth: 235px;
 	maxHeight: 20px;  // block word wrap
-	margin: margins(50px, 0px, 0px, 0px);  // left offset for place peer avatar
 	style: TextStyle(boxTextStyle) {
 		font: font(boxFontSize semibold);
 	}
+}
+muteChatTitleLeft: 50px;
+
+groupStickersRemove: contactsSearchCancel;
+groupStickersRemovePosition: point(6px, 6px);
+groupStickersFieldPadding: margins(8px, 6px, 8px, 6px);
+groupStickersField: InputField(contactsSearchField) {
+	placeholderFont: boxTextFont;
+	font: boxTextFont;
+	placeholderMargins: margins(0px, 0px, 0px, 0px);
+	textMargins: margins(0px, 7px, 0px, 0px);
+	textBg: boxBg;
+	heightMin: 32px;
+}
+groupStickersSubTitleHeight: 36px;
+
+sendMediaPreviewSize: 308px;
+sendMediaPreviewHeightMax: 1280;
+sendMediaPreviewPhotoSkip: 10px;
+sendMediaFileThumbSize: 64px;
+sendMediaFileThumbSkip: 10px;
+sendMediaFileNameTop: 7px;
+sendMediaFileStatusTop: 37px;
+
+proxyUsePadding: margins(22px, 6px, 22px, 5px);
+proxyTryIPv6Padding: margins(22px, 8px, 22px, 5px);
+proxyRowPadding: margins(22px, 8px, 8px, 8px);
+proxyRowIconSkip: 32px;
+proxyRowSkip: 2px;
+proxyRowRipple: RippleAnimation(defaultRippleAnimation) {
+	color: windowBgOver;
+}
+proxyRowSelectedIcon: icon {{ "passport_ready", windowActiveTextFg }};
+proxyRowTitleFg: windowFg;
+proxyRowTitlePalette: TextPalette(defaultTextPalette) {
+	linkFg: windowSubTextFg;
+}
+proxyRowTitleStyle: TextStyle(defaultTextStyle) {
+	font: semiboldFont;
+	linkFont: normalFont;
+	linkFontOver: normalFont;
+}
+proxyRowStatusFg: windowSubTextFg;
+proxyRowStatusFgOnline: windowActiveTextFg;
+proxyRowStatusFgOffline: boxTextFgError;
+proxyRowStatusFgAvailable: boxTextFgGood;
+proxyRowEdit: IconButton(defaultIconButton) {
+	width: 40px;
+	height: 40px;
+
+	icon: icon {{ "settings_edit_name", menuIconFg }};
+	iconOver: icon {{ "settings_edit_name", menuIconFgOver }};
+	iconPosition: point(12px, 13px);
+
+	rippleAreaSize: 40px;
+	rippleAreaPosition: point(0px, 0px);
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: windowBgOver;
+	}
+}
+
+proxyEditTitle: FlatLabel(defaultFlatLabel) {
+	style: TextStyle(defaultTextStyle) {
+		font: autoDownloadTitleFont;
+	}
+	textFg: boxTitleFg;
+}
+proxyEditTitlePadding: margins(22px, 16px, 22px, 0px);
+proxyEditTypePadding: margins(22px, 4px, 22px, 8px);
+proxyEditInputPadding: margins(22px, 0px, 22px, 0px);
+proxyEditSkip: 16px;
+
+proxyEmptyListLabel: FlatLabel(defaultFlatLabel) {
+	align: align(top);
+	textFg: windowSubTextFg;
+}
+proxyEmptyListPadding: margins(22px, 48px, 22px, 0px);
+proxyCheckingPosition: point(2px, 5px);
+proxyCheckingSkip: 6px;
+proxyCheckingAnimation: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
+	color: windowSubTextFg;
+	thickness: 1px;
+	size: size(8px, 8px);
+}
+proxyDropdownDownPosition: point(-2px, 35px);
+proxyDropdownUpPosition: point(-2px, 20px);
+
+proxyAboutPadding: margins(22px, 7px, 22px, 14px);
+proxyAboutSponsorPadding: margins(22px, 7px, 22px, 0px);
+
+markdownLinkFieldPadding: margins(22px, 0px, 22px, 10px);
+
+termsContent: FlatLabel(defaultFlatLabel) {
+	minWidth: 285px;
+}
+termsPadding: margins(23px, 4px, 16px, 16px);
+termsAgePadding: margins(23px, 16px, 16px, 0px);
+
+themesSmallSkip: 10px;
+themesBackgroundSize: 120px;
+themesScroll: ScrollArea(defaultScrollArea) {
+	bottomsh: 0px;
+	topsh: 0px;
 }

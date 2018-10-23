@@ -1,33 +1,23 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/themes/window_theme_preview.h"
 
 #include "window/themes/window_theme.h"
+#include "ui/emoji_config.h"
 #include "lang/lang_keys.h"
 #include "platform/platform_window_title.h"
+#include "ui/text_options.h"
 #include "styles/style_widgets.h"
 #include "styles/style_window.h"
 #include "styles/style_mediaview.h"
 #include "styles/style_history.h"
 #include "styles/style_dialogs.h"
+#include "styles/style_info.h"
 
 namespace Window {
 namespace Theme {
@@ -92,9 +82,9 @@ QString fillLetters(const QString &name) {
 
 class Generator {
 public:
-	Generator(const Instance &theme, const CurrentData &current);
+	Generator(const Instance &theme, CurrentData &&current);
 
-	QPixmap generate();
+	QImage generate();
 
 private:
 	enum class Status {
@@ -171,7 +161,7 @@ private:
 
 	const Instance &_theme;
 	const style::palette &_palette;
-	const CurrentData &_current;
+	CurrentData _current;
 	Painter *_p = nullptr;
 
 	QRect _rect;
@@ -212,13 +202,13 @@ void Generator::prepare() {
 
 void Generator::addRow(QString name, int peerIndex, QString date, QString text) {
 	Row row;
-	row.name.setText(st::msgNameStyle, name, _textNameOptions);
+	row.name.setText(st::msgNameStyle, name, Ui::NameTextOptions());
 
 	row.letters = fillLetters(name);
 
 	row.peerIndex = peerIndex;
 	row.date = date;
-	row.text.setRichText(st::dialogsTextStyle, text, _textDlgOptions);
+	row.text.setRichText(st::dialogsTextStyle, text, Ui::DialogTextOptions());
 	_rows.push_back(std::move(row));
 }
 
@@ -267,7 +257,7 @@ int Generator::computeInfoWidth(Status status, QString date) {
 void Generator::addTextBubble(QString text, QString date, Status status) {
 	Bubble bubble;
 	auto skipBlock = computeSkipBlock(status, date);
-	bubble.text.setRichText(st::messageTextStyle, text + textcmdSkipBlock(skipBlock.width(), skipBlock.height()), _historyTextOptions);
+	bubble.text.setRichText(st::messageTextStyle, text + textcmdSkipBlock(skipBlock.width(), skipBlock.height()), Ui::ItemTextDefaultOptions());
 
 	auto width = _history.width() - st::msgMargin.left() - st::msgMargin.right();
 	accumulate_min(width, st::msgPadding.left() + bubble.text.maxWidth() + st::msgPadding.right());
@@ -288,10 +278,10 @@ void Generator::addDateBubble(QString date) {
 void Generator::addPhotoBubble(QString image, QString caption, QString date, Status status) {
 	Bubble bubble;
 	bubble.photo.load(image);
-	bubble.photoWidth = convertScale(bubble.photo.width() / 2);
-	bubble.photoHeight = convertScale(bubble.photo.height() / 2);
+	bubble.photoWidth = ConvertScale(bubble.photo.width() / 2);
+	bubble.photoHeight = ConvertScale(bubble.photo.height() / 2);
 	auto skipBlock = computeSkipBlock(status, date);
-	bubble.text.setRichText(st::messageTextStyle, caption + textcmdSkipBlock(skipBlock.width(), skipBlock.height()), _historyTextOptions);
+	bubble.text.setRichText(st::messageTextStyle, caption + textcmdSkipBlock(skipBlock.width(), skipBlock.height()), Ui::ItemTextDefaultOptions());
 
 	auto width = _history.width() - st::msgMargin.left() - st::msgMargin.right();
 	accumulate_min(width, bubble.photoWidth);
@@ -324,7 +314,7 @@ void Generator::generateData() {
 	_rows.back().status = Status::Received;
 	addRow("Davy Jones", 5, "4:00", textcmdLink(1, "Keynote.pdf"));
 
-	_topBarName.setText(st::msgNameStyle, "Eva Summer", _textNameOptions);
+	_topBarName.setText(st::msgNameStyle, "Eva Summer", Ui::NameTextOptions());
 	_topBarStatus = "online";
 	_topBarStatusActive = true;
 
@@ -344,20 +334,22 @@ void Generator::generateData() {
 	_bubbles.back().attached = true;
 	_bubbles.back().tail = true;
 	addTextBubble("Reminds me of a Chinese proverb: the best time to plant a tree was 20 years ago. The second best time is now.", "11:00", Status::None);
-	_bubbles.back().replyName.setText(st::msgNameStyle, "Alex Cassio", _textNameOptions);
-	_bubbles.back().replyText.setText(st::messageTextStyle, "Mark Twain said that " + QString() + QChar(9757) + QChar(55356) + QChar(57339), _textDlgOptions);
+	_bubbles.back().replyName.setText(st::msgNameStyle, "Alex Cassio", Ui::NameTextOptions());
+	_bubbles.back().replyText.setText(st::messageTextStyle, "Mark Twain said that " + QString() + QChar(9757) + QChar(55356) + QChar(57339), Ui::DialogTextOptions());
 }
 
-Generator::Generator(const Instance &theme, const CurrentData &current)
+Generator::Generator(const Instance &theme, CurrentData &&current)
 : _theme(theme)
 , _palette(_theme.palette)
-, _current(current) {
+, _current(std::move(current)) {
 }
 
-QPixmap Generator::generate() {
+QImage Generator::generate() {
 	prepare();
 
-	auto result = QImage(_rect.size() * cIntRetinaFactor(), QImage::Format_ARGB32_Premultiplied);
+	auto result = QImage(
+		_rect.size() * cIntRetinaFactor(),
+		QImage::Format_ARGB32_Premultiplied);
 	result.setDevicePixelRatio(cRetinaFactor());
 	result.fill(st::themePreviewBg->c);
 
@@ -377,7 +369,7 @@ QPixmap Generator::generate() {
 	}
 	Platform::PreviewWindowFramePaint(result, _palette, _body, _rect.width());
 
-	return App::pixmapFromImageInPlace(std::move(result));
+	return result;
 }
 
 void Generator::paintHistoryList() {
@@ -406,11 +398,12 @@ void Generator::paintHistoryBackground() {
 			background.load(qsl(":/gui/art/bg.jpg"));
 			tiled = false;
 		} else {
-			background = _current.backgroundImage.toImage();
+			background = std::move(_current.backgroundImage);
 			tiled = _current.backgroundTiled;
 		}
 	}
-	background = std::move(background).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+	background = std::move(background).convertToFormat(
+		QImage::Format_ARGB32_Premultiplied);
 	background.setDevicePixelRatio(cRetinaFactor());
 	_p->setClipRect(_history);
 	if (tiled) {
@@ -418,7 +411,10 @@ void Generator::paintHistoryBackground() {
 		auto height = background.height();
 		auto repeatTimesX = qCeil(_history.width() * cIntRetinaFactor() / float64(width));
 		auto repeatTimesY = qCeil((_history.height() - fromy) * cIntRetinaFactor() / float64(height));
-		auto imageForTiled = QImage(width * repeatTimesX, height * repeatTimesY, QImage::Format_ARGB32_Premultiplied);
+		auto imageForTiled = QImage(
+			width * repeatTimesX,
+			height * repeatTimesY,
+			QImage::Format_ARGB32_Premultiplied);
 		imageForTiled.setDevicePixelRatio(background.devicePixelRatio());
 		auto imageForTiledBytes = imageForTiled.bits();
 		auto bytesInLine = width * sizeof(uint32);
@@ -430,7 +426,8 @@ void Generator::paintHistoryBackground() {
 					imageForTiledBytes += bytesInLine;
 				}
 				imageBytes += background.bytesPerLine();
-				imageForTiledBytes += imageForTiled.bytesPerLine() - (repeatTimesX * bytesInLine);
+				imageForTiledBytes += imageForTiled.bytesPerLine()
+					- (repeatTimesX * bytesInLine);
 			}
 		}
 		_p->drawImage(_history.x(), _history.y() + fromy, imageForTiled);
@@ -493,27 +490,26 @@ void Generator::paintComposeArea() {
 	auto inner = QRect(QPoint(attachEmojiLeft + (st::historyAttachEmoji.width - st::historyEmojiCircle.width()) / 2, controlsTop + st::historyEmojiCircleTop), st::historyEmojiCircle);
 	_p->drawEllipse(inner);
 
-	auto fakeMargin = 0;
-	switch (cScale()) {
-	case dbisOneAndQuarter: fakeMargin = 1; break;
-	case dbisOneAndHalf: fakeMargin = 2; break;
-	case dbisTwo: fakeMargin = 4; break;
-	}
+	const auto fakeMargin = (cScale() - 100) / 25;
 
 	auto fieldLeft = _composeArea.x() + st::historyAttach.width + fakeMargin;
 	auto fieldTop = _composeArea.y() + _composeArea.height() - st::historyAttach.height + st::historySendPadding + fakeMargin;
 	auto fieldWidth = _composeArea.width() - st::historyAttach.width - st::historySendSize.width() - st::historySendRight - st::historyAttachEmoji.width - 2 * fakeMargin;
 	auto fieldHeight = st::historySendSize.height() - 2 * st::historySendPadding - 2 * fakeMargin;
 	auto field = QRect(fieldLeft, fieldTop, fieldWidth, fieldHeight);
-	_p->fillRect(field, st::historyComposeField.bgColor[_palette]);
+	_p->fillRect(field, st::historyComposeField.textBg[_palette]);
 
 	_p->save();
 	_p->setClipRect(field);
 	_p->setFont(st::historyComposeField.font);
-	_p->setPen(st::historyComposeField.phColor[_palette]);
+	_p->setPen(st::historyComposeField.placeholderFg[_palette]);
 
-	auto phRect = QRect(field.x() + st::historyComposeField.textMrg.left() - fakeMargin + st::historyComposeField.phPos.x(), field.y() + st::historyComposeField.textMrg.top() - fakeMargin + st::historyComposeField.phPos.y(), field.width() - st::historyComposeField.textMrg.left() - st::historyComposeField.textMrg.right(), field.height() - st::historyComposeField.textMrg.top() - st::historyComposeField.textMrg.bottom());
-	_p->drawText(phRect, lang(lng_message_ph), QTextOption(st::historyComposeField.phAlign));
+	auto placeholderRect = QRect(
+		field.x() + st::historyComposeField.textMargins.left() - fakeMargin + st::historyComposeField.placeholderMargins.left(),
+		field.y() + st::historyComposeField.textMargins.top() - fakeMargin + st::historyComposeField.placeholderMargins.top(),
+		field.width() - st::historyComposeField.textMargins.left() - st::historyComposeField.textMargins.right(),
+		field.height() - st::historyComposeField.textMargins.top() - st::historyComposeField.textMargins.bottom());
+	_p->drawText(placeholderRect, lang(lng_message_ph), QTextOption(st::historyComposeField.textAlign));
 
 	_p->restore();
 	_p->setClipping(false);
@@ -889,13 +885,31 @@ void Generator::restoreTextPalette() {
 
 } // namespace
 
-std::unique_ptr<Preview> GeneratePreview(const QString &filepath, const CurrentData &data) {
+std::unique_ptr<Preview> PreviewFromFile(const QString &filepath) {
 	auto result = std::make_unique<Preview>();
-	result->path = filepath;
+	result->pathRelative = filepath.isEmpty()
+		? QString()
+		: QDir().relativeFilePath(filepath);
+	result->pathAbsolute = filepath.isEmpty()
+		? QString()
+		: QFileInfo(filepath).absoluteFilePath();
 	if (!LoadFromFile(filepath, &result->instance, &result->content)) {
-		return std::unique_ptr<Preview>();
+		return nullptr;
 	}
-	result->preview = Generator(result->instance, data).generate();
+	return result;
+}
+
+std::unique_ptr<Preview> GeneratePreview(
+		const QString &filepath,
+		CurrentData &&data) {
+	auto result = PreviewFromFile(filepath);
+	if (!result) {
+		return nullptr;
+	}
+	result->preview = Generator(
+		result->instance,
+		std::move(data)
+	).generate();
 	return result;
 }
 
@@ -934,7 +948,7 @@ void DefaultPreviewWindowFramePaint(QImage &preview, const style::palette &palet
 		currentInt = *lastLineInts;
 		++maxSize;
 	}
-	if (cRetina() && (maxSize % cIntRetinaFactor())) {
+	if (maxSize % cIntRetinaFactor()) {
 		maxSize -= (maxSize % cIntRetinaFactor());
 	}
 	auto size = maxSize / cIntRetinaFactor();

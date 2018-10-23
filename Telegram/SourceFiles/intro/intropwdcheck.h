@@ -1,26 +1,14 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include "intro/introwidget.h"
+#include "mtproto/sender.h"
 
 namespace Ui {
 class InputField;
@@ -31,7 +19,7 @@ class LinkButton;
 
 namespace Intro {
 
-class PwdCheckWidget : public Widget::Step {
+class PwdCheckWidget : public Widget::Step, private MTP::Sender {
 	Q_OBJECT
 
 public:
@@ -58,17 +46,25 @@ private:
 	void updateControlsGeometry();
 
 	void pwdSubmitDone(bool recover, const MTPauth_Authorization &result);
-	bool pwdSubmitFail(const RPCError &error);
-	bool codeSubmitFail(const RPCError &error);
-	bool recoverStartFail(const RPCError &error);
+	void pwdSubmitFail(const RPCError &error);
+	void codeSubmitFail(const RPCError &error);
+	void recoverStartFail(const RPCError &error);
 
 	void recoverStarted(const MTPauth_PasswordRecovery &result);
 
 	void updateDescriptionText();
 	void stopCheck();
+	void handleSrpIdInvalid();
+	void requestPasswordData();
+	void checkPasswordHash();
+	void passwordChecked();
+	void serverError();
 
-	QByteArray _salt;
-	bool _hasRecovery;
+	Core::CloudPasswordCheckRequest _request;
+	TimeMs _lastSrpIdInvalidTime = 0;
+	bytes::vector _passwordHash;
+	bool _hasRecovery = false;
+	bool _notEmptyPassport = false;
 	QString _hint, _emailPattern;
 
 	object_ptr<Ui::PasswordInput> _pwdField;
@@ -77,8 +73,6 @@ private:
 	object_ptr<Ui::LinkButton> _toRecover;
 	object_ptr<Ui::LinkButton> _toPassword;
 	mtpRequestId _sentRequest = 0;
-
-	QByteArray _pwdSalt;
 
 	object_ptr<QTimer> _checkRequest;
 

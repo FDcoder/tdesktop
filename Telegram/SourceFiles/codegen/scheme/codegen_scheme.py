@@ -1,22 +1,9 @@
 '''
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 '''
 import glob, re, binascii, os, sys
 
@@ -67,7 +54,18 @@ addChildParentFlags('MTPDchannelForbidden', 'MTPDchannel');
 # each key flag of parentFlags should be a subset of the value flag here
 parentFlagsCheck = {};
 
+countedTypeIdExceptions = {};
+countedTypeIdExceptions['channel#c88974ac'] = True
+countedTypeIdExceptions['ipPortSecret#37982646'] = True
+countedTypeIdExceptions['accessPointRule#4679b65f'] = True
+countedTypeIdExceptions['help.configSimple#5a592a6c'] = True
+
+renamedTypes = {};
+renamedTypes['passwordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow'] = 'passwordKdfAlgoModPow';
+
+lines = [];
 layer = '';
+layerIndex = 0;
 funcs = 0
 types = 0;
 consts = 0
@@ -83,7 +81,11 @@ funcsText = '';
 typesText = '';
 dataTexts = '';
 creatorProxyText = '';
+factories = '';
+flagOperators = '';
+methods = '';
 inlineMethods = '';
+visitorMethods = '';
 textSerializeInit = '';
 textSerializeMethods = '';
 forwards = '';
@@ -93,7 +95,12 @@ with open(input_file) as f:
   for line in f:
     layerline = re.match(r'// LAYER (\d+)', line)
     if (layerline):
-      layer = 'constexpr auto CurrentLayer = mtpPrime(' + layerline.group(1) + ');';
+      layerIndex = 	int(layerline.group(1));
+      layer = 'constexpr auto CurrentLayer = mtpPrime(' + str(layerIndex) + ');';
+    else:
+      lines.append(line);
+
+for line in lines:
     nocomment = re.match(r'^(.*?)//', line)
     if (nocomment):
       line = nocomment.group(1);
@@ -110,9 +117,13 @@ with open(input_file) as f:
     if (not nametype):
       if (not re.match(r'vector#1cb5c415 \{t:Type\} # \[ t \] = Vector t;', line)):
         print('Bad line found: ' + line);
+        sys.exit(1);
       continue;
 
-    name = nametype.group(1);
+    originalname = nametype.group(1);
+    name = originalname;
+    if (name in renamedTypes):
+      name = renamedTypes[name];
     nameInd = name.find('.');
     if (nameInd >= 0):
       Name = name[0:nameInd] + '_' + name[nameInd + 1:nameInd + 2].upper() + name[nameInd + 2:];
@@ -137,14 +148,18 @@ with open(input_file) as f:
     countTypeId = binascii.crc32(binascii.a2b_qp(cleanline));
     if (countTypeId < 0):
       countTypeId += 2 ** 32;
-    countTypeId = '0x' + re.sub(r'^0x|L$', '', hex(countTypeId));
+    countTypeId = re.sub(r'^0x|L$', '', hex(countTypeId));
     if (typeid and len(typeid) > 0):
-      typeid = '0x' + typeid;
+      typeid = typeid;
       if (typeid != countTypeId):
-        print('Warning: counted ' + countTypeId + ' mismatch with provided ' + typeid + ' (' + cleanline + ')');
-        continue;
+          key = originalname + '#' + typeid;
+          if (not key in countedTypeIdExceptions):
+            print('Warning: counted ' + countTypeId + ' mismatch with provided ' + typeid + ' (' + key + ', ' + cleanline + ')');
+            continue;
     else:
       typeid = countTypeId;
+
+    typeid = '0x' + typeid;
 
     params = nametype.group(3);
     restype = nametype.group(4);
@@ -154,7 +169,7 @@ with open(input_file) as f:
         vectemplate = templ.group(2);
         if (re.match(r'^[A-Z]', vectemplate) or re.match(r'^[a-zA-Z0-9]+_[A-Z]', vectemplate)):
           restype = templ.group(1) + 'MTP' + vectemplate.replace('.', '_') + '>';
-        elif (vectemplate == 'int' or vectemplate == 'long' or vectemplate == 'string'):
+        elif (vectemplate == 'int' or vectemplate == 'long' or vectemplate == 'string' or vectemplate == 'bytes'):
           restype = templ.group(1) + 'MTP' + vectemplate.replace('.', '_') + '>';
         else:
           foundmeta = '';
@@ -169,10 +184,10 @@ with open(input_file) as f:
             ptype = templ.group(1) + 'MTP' + foundmeta.replace('.', '_') + '>';
           else:
             print('Bad vector param: ' + vectemplate);
-            continue;
+            sys.exit(1);
       else:
         print('Bad template type: ' + restype);
-        continue;
+        sys.exit(1);
     resType = restype.replace('.', '_');
     if (restype.find('.') >= 0):
       parts = re.match(r'([a-z]+)\.([A-Z][A-Za-z0-9<>\._]+)', restype)
@@ -180,13 +195,13 @@ with open(input_file) as f:
         restype = parts.group(1) + '_' + parts.group(2)[0:1].lower() + parts.group(2)[1:];
       else:
         print('Bad result type name with dot: ' + restype);
-        continue;
+        sys.exit(1);
     else:
       if (re.match(r'^[A-Z]', restype)):
         restype = restype[:1].lower() + restype[1:];
       else:
         print('Bad result type name: ' + restype);
-        continue;
+        sys.exit(1);
 
     boxed[resType] = restype;
     boxed[Name] = name;
@@ -207,10 +222,10 @@ with open(input_file) as f:
       if (templ):
         hasTemplate = templ.group(1);
         continue;
-      pnametype = re.match(r'([a-z_][a-z0-9_]*):([A-Za-z0-9<>\._]+|![a-zA-Z]+|\#|[a-z_][a-z0-9_]*\.[0-9]+\?[A-Za-z0-9<>\._]+)$', param);
+      pnametype = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*):([A-Za-z0-9<>\._]+|![a-zA-Z]+|\#|[a-z_][a-z0-9_]*\.[0-9]+\?[A-Za-z0-9<>\._]+)$', param);
       if (not pnametype):
         print('Bad param found: "' + param + '" in line: ' + line);
-        continue;
+        sys.exit(1);
       pname = pnametype.group(1);
       ptypewide = pnametype.group(2);
       if (re.match(r'^!([a-zA-Z]+)$', ptypewide)):
@@ -219,7 +234,7 @@ with open(input_file) as f:
           ptype = 'TQueryType';
         else:
           print('Bad template param name: "' + param + '" in line: ' + line);
-          continue;
+          sys.exit(1);
       elif (ptypewide == '#'):
         hasFlags = pname;
         if funcsNow:
@@ -232,7 +247,7 @@ with open(input_file) as f:
           pmasktype = re.match(r'([a-z_][a-z0-9_]*)\.([0-9]+)\?([A-Za-z0-9<>\._]+)', ptype);
           if (not pmasktype or pmasktype.group(1) != hasFlags):
             print('Bad param found: "' + param + '" in line: ' + line);
-            continue;
+            sys.exit(1);
           ptype = pmasktype.group(3);
           if (ptype.find('<') >= 0):
             templ = re.match(r'^([vV]ector<)([A-Za-z0-9\._]+)>$', ptype);
@@ -240,7 +255,7 @@ with open(input_file) as f:
               vectemplate = templ.group(2);
               if (re.match(r'^[A-Z]', vectemplate) or re.match(r'^[a-zA-Z0-9]+_[A-Z]', vectemplate)):
                 ptype = templ.group(1) + 'MTP' + vectemplate.replace('.', '_') + '>';
-              elif (vectemplate == 'int' or vectemplate == 'long' or vectemplate == 'string'):
+              elif (vectemplate == 'int' or vectemplate == 'long' or vectemplate == 'string' or vectemplate == 'bytes'):
                 ptype = templ.group(1) + 'MTP' + vectemplate.replace('.', '_') + '>';
               else:
                 foundmeta = '';
@@ -255,10 +270,10 @@ with open(input_file) as f:
                   ptype = templ.group(1) + 'MTP' + foundmeta.replace('.', '_') + '>';
                 else:
                   print('Bad vector param: ' + vectemplate);
-                  continue;
+                  sys.exit(1);
             else:
               print('Bad template type: ' + ptype);
-              continue;
+              sys.exit(1);
           if (not pname in conditions):
             conditionsList.append(pname);
             conditions[pname] = pmasktype.group(2);
@@ -270,7 +285,7 @@ with open(input_file) as f:
             vectemplate = templ.group(2);
             if (re.match(r'^[A-Z]', vectemplate) or re.match(r'^[a-zA-Z0-9]+_[A-Z]', vectemplate)):
               ptype = templ.group(1) + 'MTP' + vectemplate.replace('.', '_') + '>';
-            elif (vectemplate == 'int' or vectemplate == 'long' or vectemplate == 'string'):
+            elif (vectemplate == 'int' or vectemplate == 'long' or vectemplate == 'string' or vectemplate == 'bytes'):
               ptype = templ.group(1) + 'MTP' + vectemplate.replace('.', '_') + '>';
             else:
               foundmeta = '';
@@ -285,18 +300,19 @@ with open(input_file) as f:
                 ptype = templ.group(1) + 'MTP' + foundmeta.replace('.', '_') + '>';
               else:
                 print('Bad vector param: ' + vectemplate);
-                continue;
+                sys.exit(1);
           else:
             print('Bad template type: ' + ptype);
-            continue;
+            sys.exit(1);
       prmsList.append(pname);
       prms[pname] = ptype.replace('.', '_');
 
     if (isTemplate == '' and resType == 'X'):
       print('Bad response type "X" in "' + name +'" in line: ' + line);
-      continue;
+      sys.exit(1);
 
     if funcsNow:
+      methodBodies = ''
       if (isTemplate != ''):
         funcsText += '\ntemplate <typename TQueryType>';
       funcsText += '\nclass MTP' + name + ' { // RPC method \'' + nametype.group(1) + '\'\n'; # class
@@ -307,19 +323,19 @@ with open(input_file) as f:
       prmsInit = [];
       prmsNames = [];
       if (hasFlags != ''):
-        funcsText += '\tenum class Flag : int32 {\n';
+        funcsText += '\tenum class Flag : uint32 {\n';
         maxbit = 0;
         parentFlagsCheck['MTP' + name] = {};
         for paramName in conditionsList:
-          funcsText += '\t\tf_' + paramName + ' = (1 << ' + conditions[paramName] + '),\n';
+          funcsText += '\t\tf_' + paramName + ' = (1U << ' + conditions[paramName] + '),\n';
           parentFlagsCheck['MTP' + name][paramName] = conditions[paramName];
           maxbit = max(maxbit, int(conditions[paramName]));
         if (maxbit > 0):
           funcsText += '\n';
-        funcsText += '\t\tMAX_FIELD = (1 << ' + str(maxbit) + '),\n';
+        funcsText += '\t\tMAX_FIELD = (1U << ' + str(maxbit) + '),\n';
         funcsText += '\t};\n';
-        funcsText += '\tQ_DECLARE_FLAGS(Flags, Flag);\n';
-        funcsText += '\tfriend inline Flags operator~(Flag v) { return QFlag(~static_cast<int32>(v)); }\n';
+        funcsText += '\tusing Flags = base::flags<Flag>;\n';
+        funcsText += '\tfriend inline constexpr auto is_flag_type(Flag) { return true; };\n';
         funcsText += '\n';
         if (len(conditions)):
           for paramName in conditionsList:
@@ -352,7 +368,12 @@ with open(input_file) as f:
         funcsText += '\tMTP' + name + '(' + ', '.join(prmsStr) + ') : ' + ', '.join(prmsInit) + ' {\n\t}\n';
 
       funcsText += '\n';
-      funcsText += '\tuint32 innerLength() const {\n'; # count size
+      funcsText += '\tuint32 innerLength() const;\n'; # count size
+      if (isTemplate != ''):
+        methodBodies += 'template <typename TQueryType>\n'
+        methodBodies += 'uint32 MTP' + name + '<TQueryType>::innerLength() const {\n';
+      else:
+        methodBodies += 'uint32 MTP' + name + '::innerLength() const {\n';
       size = [];
       for k in prmsList:
         v = prms[k];
@@ -363,63 +384,61 @@ with open(input_file) as f:
           size.append('v' + k + '.innerLength()');
       if (not len(size)):
         size.append('0');
-      funcsText += '\t\treturn ' + ' + '.join(size) + ';\n';
-      funcsText += '\t}\n';
+      methodBodies += '\treturn ' + ' + '.join(size) + ';\n';
+      methodBodies += '}\n';
 
       funcsText += '\tmtpTypeId type() const {\n\t\treturn mtpc_' + name + ';\n\t}\n'; # type id
 
-      funcsText += '\tvoid read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_' + name + ') {\n'; # read method
+      funcsText += '\tvoid read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons = mtpc_' + name + ');\n'; # read method
+      if (isTemplate != ''):
+        methodBodies += 'template <typename TQueryType>\n'
+        methodBodies += 'void MTP' + name + '<TQueryType>::read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons) {\n';
+      else:
+        methodBodies += 'void MTP' + name + '::read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons) {\n';
       for k in prmsList:
         v = prms[k];
         if (k in conditionsList):
           if (not k in trivialConditions):
-            funcsText += '\t\tif (has_' + k + '()) { v' + k + '.read(from, end); } else { v' + k + ' = MTP' + v + '(); }\n';
+            methodBodies += '\tif (has_' + k + '()) { v' + k + '.read(from, end); } else { v' + k + ' = MTP' + v + '(); }\n';
         else:
-          funcsText += '\t\tv' + k + '.read(from, end);\n';
-      funcsText += '\t}\n';
+          methodBodies += '\tv' + k + '.read(from, end);\n';
+      methodBodies += '}\n';
 
-      funcsText += '\tvoid write(mtpBuffer &to) const {\n'; # write method
+      funcsText += '\tvoid write(mtpBuffer &to) const;\n'; # write method
+      if (isTemplate != ''):
+        methodBodies += 'template <typename TQueryType>\n'
+        methodBodies += 'void MTP' + name + '<TQueryType>::write(mtpBuffer &to) const {\n';
+      else:
+        methodBodies += 'void MTP' + name + '::write(mtpBuffer &to) const {\n';
       for k in prmsList:
         v = prms[k];
         if (k in conditionsList):
           if (not k in trivialConditions):
-            funcsText += '\t\tif (has_' + k + '()) v' + k + '.write(to);\n';
+            methodBodies += '\tif (has_' + k + '()) v' + k + '.write(to);\n';
         else:
-          funcsText += '\t\tv' + k + '.write(to);\n';
-      funcsText += '\t}\n';
+          methodBodies += '\tv' + k + '.write(to);\n';
+      methodBodies += '}\n';
 
       if (isTemplate != ''):
         funcsText += '\n\tusing ResponseType = typename TQueryType::ResponseType;\n';
+        inlineMethods += methodBodies;
       else:
         funcsText += '\n\tusing ResponseType = MTP' + resType + ';\n'; # method return type
+        methods += methodBodies;
 
       funcsText += '};\n'; # class ending
-      if (len(conditionsList)):
-        funcsText += 'Q_DECLARE_OPERATORS_FOR_FLAGS(MTP' + name + '::Flags)\n\n';
       if (isTemplate != ''):
         funcsText += 'template <typename TQueryType>\n';
-        funcsText += 'class MTP' + Name + ' : public MTPBoxed<MTP' + name + '<TQueryType> > {\n';
-        funcsText += 'public:\n';
-        funcsText += '\tMTP' + Name + '() = default;\n';
-        funcsText += '\tMTP' + Name + '(const MTP' + name + '<TQueryType> &v) : MTPBoxed<MTP' + name + '<TQueryType> >(v) {\n\t}\n';
-        if (len(prms) > len(trivialConditions)):
-          funcsText += '\tMTP' + Name + '(' + ', '.join(prmsStr) + ') : MTPBoxed<MTP' + name + '<TQueryType> >(MTP' + name + '<TQueryType>(' + ', '.join(prmsNames) + ')) {\n\t}\n';
-        funcsText += '};\n';
+        funcsText += 'using MTP' + Name + ' = MTPBoxed<MTP' + name + '<TQueryType>>;\n';
       else:
-        funcsText += 'class MTP' + Name + ' : public MTPBoxed<MTP' + name + '> {\n';
-        funcsText += 'public:\n';
-        funcsText += '\tMTP' + Name + '() = default;\n';
-        funcsText += '\tMTP' + Name + '(const MTP' + name + ' &v) : MTPBoxed<MTP' + name + '>(v) {\n\t}\n';
-        if (len(prms) > len(trivialConditions)):
-          funcsText += '\tMTP' + Name + '(' + ', '.join(prmsStr) + ') : MTPBoxed<MTP' + name + '>(MTP' + name + '(' + ', '.join(prmsNames) + ')) {\n\t}\n';
-        funcsText += '};\n';
+        funcsText += 'using MTP' + Name + ' = MTPBoxed<MTP' + name + '>;\n';
       funcs = funcs + 1;
 
       if (not restype in funcsDict):
         funcsList.append(restype);
         funcsDict[restype] = [];
 #        TypesDict[restype] = resType;
-      funcsDict[restype].append([name, typeid, prmsList, prms, hasFlags, conditionsList, conditions, trivialConditions]);
+      funcsDict[restype].append([name, typeid, prmsList, prms, hasFlags, conditionsList, conditions, trivialConditions, isTemplate]);
     else:
       if (isTemplate != ''):
         print('Template types not allowed: "' + resType + '" in line: ' + line);
@@ -428,7 +447,7 @@ with open(input_file) as f:
         typesList.append(restype);
         typesDict[restype] = [];
       TypesDict[restype] = resType;
-      typesDict[restype].append([name, typeid, prmsList, prms, hasFlags, conditionsList, conditions, trivialConditions]);
+      typesDict[restype].append([name, typeid, prmsList, prms, hasFlags, conditionsList, conditions, trivialConditions, isTemplate]);
 
       consts = consts + 1;
 
@@ -445,10 +464,15 @@ def addTextSerialize(lst, dct, dataLetter):
       conditionsList = data[5];
       conditions = data[6];
       trivialConditions = data[7];
+      isTemplate = data[8];
 
-      result += 'void Serialize_' + name + '(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, int32 iflag) {\n';
+      templateArgument = ''
+      if (isTemplate != ''):
+          templateArgument = '<MTP::SecureRequest>'
+
+      result += 'void Serialize_' + name + '(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, uint32 iflag) {\n';
       if (len(conditions)):
-        result += '\tMTP' + dataLetter + name + '::Flags flag(iflag);\n\n';
+        result += '\tauto flag = MTP' + dataLetter + name + templateArgument + '::Flags::from_raw(iflag);\n\n';
       if (len(prms)):
         result += '\tif (stage) {\n';
         result += '\t\tto.add(",\\n").addSpaces(lev);\n';
@@ -464,12 +488,12 @@ def addTextSerialize(lst, dct, dataLetter):
           if (k == hasFlags):
             result += 'if (start >= end) throw Exception("start >= end in flags"); else flags.back() = *start; ';
           if (k in trivialConditions):
-            result += 'if (flag & MTP' + dataLetter + name + '::Flag::f_' + k + ') { ';
+            result += 'if (flag & MTP' + dataLetter + name + templateArgument + '::Flag::f_' + k + ') { ';
             result += 'to.add("YES [ BY BIT ' + conditions[k] + ' IN FIELD ' + hasFlags + ' ]"); ';
             result += '} else { to.add("[ SKIPPED BY BIT ' + conditions[k] + ' IN FIELD ' + hasFlags + ' ]"); } ';
           else:
             if (k in conditions):
-              result += 'if (flag & MTP' + dataLetter + name + '::Flag::f_' + k + ') { ';
+              result += 'if (flag & MTP' + dataLetter + name + templateArgument + '::Flag::f_' + k + ') { ';
             result += 'types.push_back(';
             vtypeget = re.match(r'^[Vv]ector<MTP([A-Za-z0-9\._]+)>', v);
             if (vtypeget):
@@ -513,7 +537,9 @@ def addTextSerialize(lst, dct, dataLetter):
                 if (not vtypeget):
                   result += '); vtypes.push_back(0';
             else:
-              result += '0); vtypes.push_back(0';
+              if (not vtypeget):
+                result += '0';
+              result += '); vtypes.push_back(0';
             result += '); stages.push_back(0); flags.push_back(0); ';
             if (k in conditions):
               result += '} else { to.add("[ SKIPPED BY BIT ' + conditions[k] + ' IN FIELD ' + hasFlags + ' ]"); } ';
@@ -545,9 +571,11 @@ for restype in typesList:
   v = typesDict[restype];
   resType = TypesDict[restype];
   withData = 0;
-  creatorsText = '';
+  creatorsDeclarations = '';
+  creatorsBodies = '';
+  flagDeclarations = '';
   constructsText = '';
-  constructsInline = '';
+  constructsBodies = '';
 
   forwards += 'class MTP' + restype + ';\n';
   forwTypedefs += 'using MTP' + resType + ' = MTPBoxed<MTP' + restype + '>;\n';
@@ -556,6 +584,7 @@ for restype in typesList:
   switchLines = '';
   friendDecl = '';
   getters = '';
+  visitor = '';
   reader = '';
   writer = '';
   sizeList = [];
@@ -573,9 +602,14 @@ for restype in typesList:
     trivialConditions = data[7];
 
     dataText = '';
-    dataText += '\nclass MTPD' + name + ' : public MTP::internal::TypeData {\n'; # data class
+    if (len(prms) > len(trivialConditions)):
+      withData = 1;
+      dataText += '\nclass MTPD' + name + ' : public MTP::internal::TypeData {\n'; # data class
+    else:
+      dataText += '\nclass MTPD' + name + ' {\n'; # empty data class for visitors
     dataText += 'public:\n';
-
+    dataText += '\ttemplate <typename Other>\n';
+    dataText += '\tstatic constexpr bool Is() { return std::is_same_v<std::decay_t<Other>, MTPD' + name + '>; };\n\n';
     sizeList = [];
     creatorParams = [];
     creatorParamsList = [];
@@ -583,19 +617,19 @@ for restype in typesList:
     writeText = '';
 
     if (hasFlags != ''):
-      dataText += '\tenum class Flag : int32 {\n';
+      dataText += '\tenum class Flag : uint32 {\n';
       maxbit = 0;
       parentFlagsCheck['MTPD' + name] = {};
       for paramName in conditionsList:
-        dataText += '\t\tf_' + paramName + ' = (1 << ' + conditions[paramName] + '),\n';
+        dataText += '\t\tf_' + paramName + ' = (1U << ' + conditions[paramName] + '),\n';
         parentFlagsCheck['MTPD' + name][paramName] = conditions[paramName];
         maxbit = max(maxbit, int(conditions[paramName]));
       if (maxbit > 0):
         dataText += '\n';
-      dataText += '\t\tMAX_FIELD = (1 << ' + str(maxbit) + '),\n';
+      dataText += '\t\tMAX_FIELD = (1U << ' + str(maxbit) + '),\n';
       dataText += '\t};\n';
-      dataText += '\tQ_DECLARE_FLAGS(Flags, Flag);\n';
-      dataText += '\tfriend inline Flags operator~(Flag v) { return QFlag(~static_cast<int32>(v)); }\n';
+      dataText += '\tusing Flags = base::flags<Flag>;\n';
+      dataText += '\tfriend inline constexpr auto is_flag_type(Flag) { return true; };\n';
       dataText += '\n';
       if (len(conditions)):
         for paramName in conditionsList:
@@ -605,24 +639,26 @@ for restype in typesList:
             dataText += '\tbool has_' + paramName + '() const { return v' + hasFlags + '.v & Flag::f_' + paramName + '; }\n';
         dataText += '\n';
 
-    dataText += '\tMTPD' + name + '() = default;\n'; # default constructor
-    switchLines += '\t\tcase mtpc_' + name + ': '; # for by-type-id type constructor
-    if (len(prms) > len(trivialConditions)):
-      switchLines += 'setData(new MTPD' + name + '()); ';
-      withData = 1;
+    switchLines += '\tcase mtpc_' + name + ': '; # for by-type-id type constructor
+    getters += '\tconst MTPD' + name + ' &c_' + name + '() const;\n'; # const getter
+    visitor += '\tcase mtpc_' + name + ': return base::match_method(c_' + name + '(), std::forward<Method>(method), std::forward<Methods>(methods)...);\n';
 
-      getters += '\tconst MTPD' + name + ' &c_' + name + '() const;\n'; # const getter
-      constructsInline += 'inline const MTPD' + name + ' &MTP' + restype + '::c_' + name + '() const {\n';
+    forwards += 'class MTPD' + name + ';\n'; # data class forward declaration
+    if (len(prms) > len(trivialConditions)):
+      dataText += '\tMTPD' + name + '() = default;\n'; # default constructor
+      switchLines += 'setData(new MTPD' + name + '()); ';
+
+      constructsBodies += 'const MTPD' + name + ' &MTP' + restype + '::c_' + name + '() const {\n';
       if (withType):
-        constructsInline += '\tt_assert(_type == mtpc_' + name + ');\n';
-      constructsInline += '\treturn queryData<MTPD' + name + '>();\n';
-      constructsInline += '}\n';
+        constructsBodies += '\tExpects(_type == mtpc_' + name + ');\n\n';
+      constructsBodies += '\treturn queryData<MTPD' + name + '>();\n';
+      constructsBodies += '}\n';
 
       constructsText += '\texplicit MTP' + restype + '(const MTPD' + name + ' *data);\n'; # by-data type constructor
-      constructsInline += 'inline MTP' + restype + '::MTP' + restype + '(const MTPD' + name + ' *data) : TypeDataOwner(data)';
+      constructsBodies += 'MTP' + restype + '::MTP' + restype + '(const MTPD' + name + ' *data) : TypeDataOwner(data)';
       if (withType):
-        constructsInline += ', _type(mtpc_' + name + ')';
-      constructsInline += ' {\n}\n';
+        constructsBodies += ', _type(mtpc_' + name + ')';
+      constructsBodies += ' {\n}\n';
 
       dataText += '\tMTPD' + name + '('; # params constructor
       prmsStr = [];
@@ -641,8 +677,8 @@ for restype in typesList:
         creatorParamsList.append('_' + paramName);
         prmsInit.append('v' + paramName + '(_' + paramName + ')');
         if (withType):
-          readText += '\t\t';
-          writeText += '\t\t';
+          readText += '\t';
+          writeText += '\t';
         if (paramName in conditions):
           readText += '\tif (v->has_' + paramName + '()) { v->v' + paramName + '.read(from, end); } else { v->v' + paramName + ' = MTP' + paramType + '(); }\n';
           writeText += '\tif (v.has_' + paramName + '()) v.v' + paramName + '.write(to);\n';
@@ -652,9 +688,9 @@ for restype in typesList:
           writeText += '\tv.v' + paramName + '.write(to);\n';
           sizeList.append('v.v' + paramName + '.innerLength()');
 
-      forwards += 'class MTPD' + name + ';\n'; # data class forward declaration
+      dataText += ', '.join(prmsStr) + ');\n';
 
-      dataText += ', '.join(prmsStr) + ') : ' + ', '.join(prmsInit) + ' {\n\t}\n';
+      constructsBodies += 'MTPD' + name + '::MTPD' + name + '(' + ', '.join(prmsStr) + ') : ' + ', '.join(prmsInit) + ' {\n}\n';
 
       dataText += '\n';
       for paramName in prmsList: # fields declaration
@@ -662,20 +698,26 @@ for restype in typesList:
           continue;
         paramType = prms[paramName];
         dataText += '\tMTP' + paramType + ' v' + paramName + ';\n';
-      sizeCases += '\t\tcase mtpc_' + name + ': {\n';
-      sizeCases += '\t\t\tconst MTPD' + name + ' &v(c_' + name + '());\n';
-      sizeCases += '\t\t\treturn ' + ' + '.join(sizeList) + ';\n';
-      sizeCases += '\t\t}\n';
+      sizeCases += '\tcase mtpc_' + name + ': {\n';
+      sizeCases += '\t\tconst MTPD' + name + ' &v(c_' + name + '());\n';
+      sizeCases += '\t\treturn ' + ' + '.join(sizeList) + ';\n';
+      sizeCases += '\t}\n';
       sizeFast = '\tconst MTPD' + name + ' &v(c_' + name + '());\n\treturn ' + ' + '.join(sizeList) + ';\n';
       newFast = 'new MTPD' + name + '()';
     else:
+      constructsBodies += 'const MTPD' + name + ' &MTP' + restype + '::c_' + name + '() const {\n';
+      if (withType):
+        constructsBodies += '\tExpects(_type == mtpc_' + name + ');\n\n';
+      constructsBodies += '\tstatic const MTPD' + name + ' result;\n';
+      constructsBodies += '\treturn result;\n';
+      constructsBodies += '}\n';
+
       sizeFast = '\treturn 0;\n';
 
     switchLines += 'break;\n';
     dataText += '};\n'; # class ending
 
-    if (len(prms) > len(trivialConditions)):
-      dataTexts += dataText; # add data class
+    dataTexts += dataText; # add data class
 
     if (not friendDecl):
       friendDecl += '\tfriend class MTP::internal::TypeCreator;\n';
@@ -688,25 +730,24 @@ for restype in typesList:
       else: # single creator
         creatorProxyText += '\t\treturn MTP' + restype + '();\n';
     creatorProxyText += '\t}\n';
-    if (len(conditionsList)):
-      creatorsText += 'Q_DECLARE_OPERATORS_FOR_FLAGS(MTPD' + name + '::Flags)\n';
-    creatorsText += 'inline MTP' + restype + ' MTP_' + name + '(' + ', '.join(creatorParams) + ') {\n';
-    creatorsText += '\treturn MTP::internal::TypeCreator::new_' + name + '(' + ', '.join(creatorParamsList) + ');\n';
-    creatorsText += '}\n';
+    creatorsDeclarations += 'MTP' + restype + ' MTP_' + name + '(' + ', '.join(creatorParams) + ');\n';
+    creatorsBodies += 'MTP' + restype + ' MTP_' + name + '(' + ', '.join(creatorParams) + ') {\n';
+    creatorsBodies += '\treturn MTP::internal::TypeCreator::new_' + name + '(' + ', '.join(creatorParamsList) + ');\n';
+    creatorsBodies += '}\n';
 
     if (withType):
-      reader += '\t\tcase mtpc_' + name + ': _type = cons; '; # read switch line
+      reader += '\tcase mtpc_' + name + ': _type = cons; '; # read switch line
       if (len(prms) > len(trivialConditions)):
         reader += '{\n';
-        reader += '\t\t\tauto v = new MTPD' + name + '();\n';
-        reader += '\t\t\tsetData(v);\n';
+        reader += '\t\tauto v = new MTPD' + name + '();\n';
+        reader += '\t\tsetData(v);\n';
         reader += readText;
-        reader += '\t\t} break;\n';
+        reader += '\t} break;\n';
 
-        writer += '\t\tcase mtpc_' + name + ': {\n'; # write switch line
-        writer += '\t\t\tauto &v = c_' + name + '();\n';
+        writer += '\tcase mtpc_' + name + ': {\n'; # write switch line
+        writer += '\t\tauto &v = c_' + name + '();\n';
         writer += writeText;
-        writer += '\t\t} break;\n';
+        writer += '\t} break;\n';
       else:
         reader += 'break;\n';
     else:
@@ -715,7 +756,7 @@ for restype in typesList:
         reader += '\tsetData(v);\n';
         reader += readText;
 
-        writer += '\tauto &v = c_' + name + '();\n';
+        writer += '\tconst auto &v = c_' + name + '();\n';
         writer += writeText;
 
   forwards += '\n';
@@ -726,87 +767,90 @@ for restype in typesList:
   typesText += ' {\n';
   typesText += 'public:\n';
   typesText += '\tMTP' + restype + '()'; # default constructor
-  inits = [];
-  if not (withType):
-    if (withData):
-      inits.append('TypeDataOwner(' + newFast + ')');
   if (withData and not withType):
     typesText += ';\n';
-    inlineMethods += '\ninline MTP' + restype + '::MTP' + restype + '()';
-    if (inits):
-      inlineMethods += ' : ' + ', '.join(inits);
-    inlineMethods += ' {\n}\n';
+    methods += '\nMTP' + restype + '::MTP' + restype + '() : TypeDataOwner(' + newFast + ') {\n}\n';
   else:
-    if (inits):
-      typesText += ' : ' + ', '.join(inits);
-    typesText += ' {\n\t}\n';
+    typesText += ' = default;\n';
 
-  if (withData):
-    typesText += getters;
+  typesText += getters;
+  typesText += '\n';
+  typesText += '\ttemplate <typename Method, typename ...Methods>\n';
+  typesText += '\tdecltype(auto) match(Method &&method, Methods &&...methods) const;\n';
+  visitorMethods += 'template <typename Method, typename ...Methods>\n';
+  visitorMethods += 'decltype(auto) MTP' + restype + '::match(Method &&method, Methods &&...methods) const {\n';
+  if (withType):
+    visitorMethods += '\tswitch (_type) {\n';
+    visitorMethods += visitor;
+    visitorMethods += '\t}\n';
+    visitorMethods += '\tUnexpected("Type in MTP' + restype + '::match.");\n';
+  else:
+    visitorMethods += '\treturn base::match_method(c_' + v[0][0] + '(), std::forward<Method>(method), std::forward<Methods>(methods)...);\n';
+  visitorMethods += '}\n\n';
 
   typesText += '\n\tuint32 innerLength() const;\n'; # size method
-  inlineMethods += '\ninline uint32 MTP' + restype + '::innerLength() const {\n';
+  methods += '\nuint32 MTP' + restype + '::innerLength() const {\n';
   if (withType and sizeCases):
-    inlineMethods += '\tswitch (_type) {\n';
-    inlineMethods += sizeCases;
-    inlineMethods += '\t}\n';
-    inlineMethods += '\treturn 0;\n';
+    methods += '\tswitch (_type) {\n';
+    methods += sizeCases;
+    methods += '\t}\n';
+    methods += '\treturn 0;\n';
   else:
-    inlineMethods += sizeFast;
-  inlineMethods += '}\n';
+    methods += sizeFast;
+  methods += '}\n';
 
   typesText += '\tmtpTypeId type() const;\n'; # type id method
-  inlineMethods += 'inline mtpTypeId MTP' + restype + '::type() const {\n';
+  methods += 'mtpTypeId MTP' + restype + '::type() const {\n';
   if (withType):
-    inlineMethods += '\tt_assert(_type != 0);\n';
-    inlineMethods += '\treturn _type;\n';
+    methods += '\tExpects(_type != 0);\n\n';
+    methods += '\treturn _type;\n';
   else:
-    inlineMethods += '\treturn mtpc_' + v[0][0] + ';\n';
-  inlineMethods += '}\n';
+    methods += '\treturn mtpc_' + v[0][0] + ';\n';
+  methods += '}\n';
 
   typesText += '\tvoid read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons'; # read method
   if (not withType):
     typesText += ' = mtpc_' + name;
   typesText += ');\n';
-  inlineMethods += 'inline void MTP' + restype + '::read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons) {\n';
+  methods += 'void MTP' + restype + '::read(const mtpPrime *&from, const mtpPrime *end, mtpTypeId cons) {\n';
   if (withData):
     if not (withType):
-      inlineMethods += '\tif (cons != mtpc_' + v[0][0] + ') throw mtpErrorUnexpected(cons, "MTP' + restype + '");\n';
+      methods += '\tif (cons != mtpc_' + v[0][0] + ') throw mtpErrorUnexpected(cons, "MTP' + restype + '");\n';
   if (withType):
-    inlineMethods += '\tswitch (cons) {\n'
-    inlineMethods += reader;
-    inlineMethods += '\t\tdefault: throw mtpErrorUnexpected(cons, "MTP' + restype + '");\n';
-    inlineMethods += '\t}\n';
+    methods += '\tswitch (cons) {\n'
+    methods += reader;
+    methods += '\tdefault: throw mtpErrorUnexpected(cons, "MTP' + restype + '");\n';
+    methods += '\t}\n';
   else:
-    inlineMethods += reader;
-  inlineMethods += '}\n';
+    methods += reader;
+  methods += '}\n';
 
   typesText += '\tvoid write(mtpBuffer &to) const;\n'; # write method
-  inlineMethods += 'inline void MTP' + restype + '::write(mtpBuffer &to) const {\n';
+  methods += 'void MTP' + restype + '::write(mtpBuffer &to) const {\n';
   if (withType and writer != ''):
-    inlineMethods += '\tswitch (_type) {\n';
-    inlineMethods += writer;
-    inlineMethods += '\t}\n';
+    methods += '\tswitch (_type) {\n';
+    methods += writer;
+    methods += '\t}\n';
   else:
-    inlineMethods += writer;
-  inlineMethods += '}\n';
+    methods += writer;
+  methods += '}\n';
 
   typesText += '\n\tusing ResponseType = void;\n'; # no response types declared
 
   typesText += '\nprivate:\n'; # private constructors
   if (withType): # by-type-id constructor
     typesText += '\texplicit MTP' + restype + '(mtpTypeId type);\n';
-    inlineMethods += 'inline MTP' + restype + '::MTP' + restype + '(mtpTypeId type) : ';
-    inlineMethods += '_type(type)';
-    inlineMethods += ' {\n';
-    inlineMethods += '\tswitch (type) {\n'; # type id check
-    inlineMethods += switchLines;
-    inlineMethods += '\t\tdefault: throw mtpErrorBadTypeId(type, "MTP' + restype + '");\n\t}\n';
-    inlineMethods += '}\n'; # by-type-id constructor end
+    methods += 'MTP' + restype + '::MTP' + restype + '(mtpTypeId type) : ';
+    methods += '_type(type)';
+    methods += ' {\n';
+    methods += '\tswitch (type) {\n'; # type id check
+    methods += switchLines;
+    methods += '\tdefault: throw mtpErrorBadTypeId(type, "MTP' + restype + '");\n\t}\n';
+    methods += '}\n'; # by-type-id constructor end
 
   if (withData):
     typesText += constructsText;
-    inlineMethods += constructsInline;
+  methods += constructsBodies;
 
   if (friendDecl):
     typesText += '\n' + friendDecl;
@@ -816,8 +860,12 @@ for restype in typesList:
 
   typesText += '};\n'; # type class ended
 
-  inlineMethods += creatorsText;
+  flagOperators += flagDeclarations;
+  factories += creatorsDeclarations;
+  methods += creatorsBodies;
   typesText += 'using MTP' + resType + ' = MTPBoxed<MTP' + restype + '>;\n'; # boxed type definition
+
+flagOperators += '\n'
 
 for childName in parentFlagsList:
   parentName = parentFlags[childName];
@@ -828,20 +876,20 @@ for childName in parentFlagsList:
 #
 #    if (not flag in parentFlagsCheck[parentName]):
 #      print('Flag ' + flag + ' not found in ' + parentName + ' which should be a flags-parent of ' + childName);
-#      error
+#      sys.exit(1);
 #
     if (flag in parentFlagsCheck[parentName]):
       if (parentFlagsCheck[childName][flag] != parentFlagsCheck[parentName][flag]):
         print('Flag ' + flag + ' has different value in ' + parentName + ' which should be a flags-parent of ' + childName);
-        error
+        sys.exit(1);
     else:
       parentFlagsCheck[parentName][flag] = parentFlagsCheck[childName][flag];
-  inlineMethods += 'inline ' + parentName + '::Flags mtpCastFlags(' + childName + '::Flags flags) { return ' + parentName + '::Flags(QFlag(flags)); }\n';
-  inlineMethods += 'inline ' + parentName + '::Flags mtpCastFlags(MTPflags<' + childName + '::Flags> flags) { return mtpCastFlags(flags.v); }\n';
+  flagOperators += 'inline ' + parentName + '::Flags mtpCastFlags(' + childName + '::Flags flags) { return static_cast<' + parentName + '::Flag>(flags.value()); }\n';
+  flagOperators += 'inline ' + parentName + '::Flags mtpCastFlags(MTPflags<' + childName + '::Flags> flags) { return mtpCastFlags(flags.v); }\n';
 
 # manual types added here
 textSerializeMethods += '\
-void _serialize_rpc_result(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, int32 iflag) {\n\
+void _serialize_rpc_result(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, uint32 iflag) {\n\
 	if (stage) {\n\
 		to.add(",\\n").addSpaces(lev);\n\
 	} else {\n\
@@ -855,7 +903,7 @@ void _serialize_rpc_result(MTPStringLogger &to, int32 stage, int32 lev, Types &t
 	}\n\
 }\n\
 \n\
-void _serialize_msg_container(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, int32 iflag) {\n\
+void _serialize_msg_container(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, uint32 iflag) {\n\
 	if (stage) {\n\
 		to.add(",\\n").addSpaces(lev);\n\
 	} else {\n\
@@ -868,7 +916,7 @@ void _serialize_msg_container(MTPStringLogger &to, int32 stage, int32 lev, Types
 	}\n\
 }\n\
 \n\
-void _serialize_core_message(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, int32 iflag) {\n\
+void _serialize_core_message(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, uint32 iflag) {\n\
 	if (stage) {\n\
 		to.add(",\\n").addSpaces(lev);\n\
 	} else {\n\
@@ -898,27 +946,15 @@ WARNING! All changes made in this file will be lost!\n\
 Created from \'' + os.path.basename(input_file) + '\' by \'codegen_scheme\'\n\
 \n\
 This file is part of Telegram Desktop,\n\
-the official desktop version of Telegram messaging app, see https://telegram.org\n\
+the official desktop application for the Telegram messaging service.\n\
 \n\
-Telegram Desktop is free software: you can redistribute it and/or modify\n\
-it under the terms of the GNU General Public License as published by\n\
-the Free Software Foundation, either version 3 of the License, or\n\
-(at your option) any later version.\n\
-\n\
-It is distributed in the hope that it will be useful,\n\
-but WITHOUT ANY WARRANTY; without even the implied warranty of\n\
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\n\
-GNU General Public License for more details.\n\
-\n\
-In addition, as a special exception, the copyright holders give permission\n\
-to link the code of portions of this program with the OpenSSL library.\n\
-\n\
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE\n\
-Copyright (c) 2014 John Preston, https://desktop.telegram.org\n\
+For license and copyright information please follow this link:\n\
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL\n\
 */\n\
 #pragma once\n\
 \n\
 #include "mtproto/core_types.h"\n\
+#include "base/flags.h"\n\
 \n\
 // Creator current layer and proxy class declaration\n\
 namespace MTP {\n\
@@ -946,6 +982,30 @@ enum {\n\
 ' + dataTexts + '\n\
 // RPC methods\n\
 ' + funcsText + '\n\
+// Template methods definition\n\
+' + inlineMethods + '\n\
+// Visitor definition\n\
+' + visitorMethods + '\n\
+// Flag operators definition\n\
+' + flagOperators + '\n\
+// Factory methods declaration\n\
+' + factories + '\n\
+// Human-readable text serialization\n\
+void mtpTextSerializeType(MTPStringLogger &to, const mtpPrime *&from, const mtpPrime *end, mtpPrime cons, uint32 level, mtpPrime vcons);\n'
+
+source = '\
+/*\n\
+WARNING! All changes made in this file will be lost!\n\
+Created from \'' + os.path.basename(input_file) + '\' by \'codegen_scheme\'\n\
+\n\
+This file is part of Telegram Desktop,\n\
+the official desktop application for the Telegram messaging service.\n\
+\n\
+For license and copyright information please follow this link:\n\
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL\n\
+*/\n\
+#include "scheme.h"\n\
+\n\
 // Creator proxy class definition\n\
 namespace MTP {\n\
 namespace internal {\n\
@@ -958,33 +1018,8 @@ public:\n\
 } // namespace internal\n\
 } // namespace MTP\n\
 \n\
-// Inline methods definition\n\
-' + inlineMethods + '\n\
-// Human-readable text serialization\n\
-void mtpTextSerializeType(MTPStringLogger &to, const mtpPrime *&from, const mtpPrime *end, mtpPrime cons, uint32 level, mtpPrime vcons);\n'
-
-source = '\
-/*\n\
-WARNING! All changes made in this file will be lost!\n\
-Created from \'' + os.path.basename(input_file) + '\' by \'codegen_scheme\'\n\
-\n\
-This file is part of Telegram Desktop,\n\
-the official desktop version of Telegram messaging app, see https://telegram.org\n\
-\n\
-Telegram Desktop is free software: you can redistribute it and/or modify\n\
-it under the terms of the GNU General Public License as published by\n\
-the Free Software Foundation, either version 3 of the License, or\n\
-(at your option) any later version.\n\
-\n\
-It is distributed in the hope that it will be useful,\n\
-but WITHOUT ANY WARRANTY; without even the implied warranty of\n\
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\n\
-GNU General Public License for more details.\n\
-\n\
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE\n\
-Copyright (c) 2014 John Preston, https://desktop.telegram.org\n\
-*/\n\
-#include "scheme.h"\n\
+// Methods definition\n\
+' + methods + '\n\
 \n\
 using Types = QVector<mtpTypeId>;\n\
 using StagesFlags = QVector<int32>;\n\
@@ -992,7 +1027,7 @@ using StagesFlags = QVector<int32>;\n\
 ' + textSerializeMethods + '\n\
 namespace {\n\
 \n\
-using TextSerializer = void (*)(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, int32 iflag);\n\
+using TextSerializer = void (*)(MTPStringLogger &to, int32 stage, int32 lev, Types &types, Types &vtypes, StagesFlags &stages, StagesFlags &flags, const mtpPrime *start, const mtpPrime *end, uint32 iflag);\n\
 using TextSerializers = QMap<mtpTypeId, TextSerializer>;\n\
 \n\
 QMap<mtpTypeId, TextSerializer> createTextSerializers() {\n\

@@ -1,33 +1,26 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
+
+#include "base/flags.h"
 
 namespace qthelp {
 
 class RegularExpressionMatch {
 public:
+	RegularExpressionMatch(const QRegularExpressionMatch &other) = delete;
+	RegularExpressionMatch(const RegularExpressionMatch &other) = delete;
 	RegularExpressionMatch(QRegularExpressionMatch &&match) : data_(std::move(match)) {
 	}
 	RegularExpressionMatch(RegularExpressionMatch &&other) : data_(std::move(other.data_)) {
 	}
+	RegularExpressionMatch &operator=(const QRegularExpressionMatch &match) = delete;
+	RegularExpressionMatch &operator=(const RegularExpressionMatch &other) = delete;
 	RegularExpressionMatch &operator=(QRegularExpressionMatch &&match) {
 		data_ = std::move(match);
 		return *this;
@@ -65,8 +58,8 @@ enum class RegExOption {
 	DontAutomaticallyOptimize = QRegularExpression::DontAutomaticallyOptimizeOption,
 #endif // OS_MAC_OLD
 };
-Q_DECLARE_FLAGS(RegExOptions, RegExOption);
-Q_DECLARE_OPERATORS_FOR_FLAGS(RegExOptions);
+using RegExOptions = base::flags<RegExOption>;
+inline constexpr auto is_flag_type(RegExOption) { return true; };
 
 inline RegularExpressionMatch regex_match(const QString &string, const QString &subject, RegExOptions options = 0) {
 	auto qtOptions = QRegularExpression::PatternOptions(static_cast<int>(options));

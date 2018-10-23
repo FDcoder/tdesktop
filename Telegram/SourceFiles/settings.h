@@ -1,36 +1,11 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
-
-extern bool gDebug;
-inline bool cDebug() {
-#if defined _DEBUG
-	return true;
-#else
-	return gDebug;
-#endif
-}
-inline void cSetDebug(bool debug) {
-	gDebug = debug;
-}
 
 #define DeclareReadSetting(Type, Name) extern Type g##Name; \
 inline const Type &c##Name() { \
@@ -53,12 +28,10 @@ inline bool rtl() {
 	return cRtl();
 }
 
-DeclareReadSetting(QString, Arguments);
-
-DeclareSetting(bool, AlphaVersion);
-DeclareSetting(uint64, BetaVersion);
-DeclareSetting(uint64, RealBetaVersion);
-DeclareSetting(QByteArray, BetaPrivateKey);
+DeclareSetting(bool, InstallBetaVersion);
+DeclareSetting(uint64, AlphaVersion);
+DeclareSetting(uint64, RealAlphaVersion);
+DeclareSetting(QByteArray, AlphaPrivateKey);
 
 DeclareSetting(bool, TestMode);
 DeclareSetting(QString, LoggedPhoneNumber);
@@ -77,7 +50,12 @@ DeclareReadSetting(LaunchMode, LaunchMode);
 DeclareSetting(QString, WorkingDir);
 inline void cForceWorkingDir(const QString &newDir) {
 	cSetWorkingDir(newDir);
-	if (!gWorkingDir.isEmpty()) QDir().mkpath(gWorkingDir);
+	if (!gWorkingDir.isEmpty()) {
+		QDir().mkpath(gWorkingDir);
+		QFile::setPermissions(gWorkingDir,
+			QFileDevice::ReadUser | QFileDevice::WriteUser | QFileDevice::ExeUser);
+	}
+
 }
 DeclareReadSetting(QString, ExeName);
 DeclareReadSetting(QString, ExeDir);
@@ -86,7 +64,6 @@ DeclareSetting(QString, DialogHelperPath);
 inline const QString &cDialogHelperPathFinal() {
 	return cDialogHelperPath().isEmpty() ? cExeDir() : cDialogHelperPath();
 }
-DeclareSetting(bool, CtrlEnter);
 
 DeclareSetting(bool, AutoUpdate);
 
@@ -110,35 +87,16 @@ DeclareSetting(bool, WriteProtected);
 DeclareSetting(int32, LastUpdateCheck);
 DeclareSetting(bool, NoStartUpdate);
 DeclareSetting(bool, StartToSettings);
-DeclareSetting(bool, ReplaceEmojis);
 DeclareReadSetting(bool, ManyInstance);
 
 DeclareSetting(QByteArray, LocalSalt);
-DeclareSetting(DBIScale, RealScale);
-DeclareSetting(DBIScale, ScreenScale);
-DeclareSetting(DBIScale, ConfigScale);
-DeclareSetting(bool, CompressPastedImage);
+DeclareSetting(int, RealScale);
+DeclareSetting(int, ScreenScale);
+DeclareSetting(int, ConfigScale);
 DeclareSetting(QString, TimeFormat);
 
 inline void cChangeTimeFormat(const QString &newFormat) {
 	if (!newFormat.isEmpty()) cSetTimeFormat(newFormat);
-}
-
-inline DBIScale cEvalScale(DBIScale scale) {
-	return (scale == dbisAuto) ? cScreenScale() : scale;
-}
-inline DBIScale cScale() {
-	return cEvalScale(cRealScale());
-}
-
-template <typename T>
-T convertScale(T v) {
-	switch (cScale()) {
-		case dbisOneAndQuarter: return qRound(float64(v) * 1.25 - 0.01);
-		case dbisOneAndHalf: return qRound(float64(v) * 1.5 - 0.01);
-		case dbisTwo: return v * 2;
-	}
-	return v;
 }
 
 namespace Ui {
@@ -161,23 +119,14 @@ DeclareSetting(RecentEmojiPreload, RecentEmojiPreload);
 DeclareRefSetting(EmojiColorVariants, EmojiVariants);
 
 class DocumentData;
-typedef QVector<DocumentData*> StickerPack;
 
-typedef QList<QPair<DocumentData*, int16> > RecentStickerPackOld;
-typedef QVector<QPair<uint64, ushort> > RecentStickerPreload;
-typedef QVector<QPair<DocumentData*, ushort> > RecentStickerPack;
+typedef QList<QPair<DocumentData*, int16>> RecentStickerPackOld;
+typedef QVector<QPair<uint64, ushort>> RecentStickerPreload;
+typedef QVector<QPair<DocumentData*, ushort>> RecentStickerPack;
 DeclareSetting(RecentStickerPreload, RecentStickersPreload);
 DeclareRefSetting(RecentStickerPack, RecentStickers);
 
-RecentStickerPack &cGetRecentStickers();
-
-typedef QMap<EmojiPtr, StickerPack> StickersByEmojiMap;
-
-typedef QVector<DocumentData*> SavedGifs;
-DeclareRefSetting(SavedGifs, SavedGifs);
-DeclareSetting(TimeMs, LastSavedGifsUpdate);
-
-typedef QList<QPair<QString, ushort> > RecentHashtagPack;
+typedef QList<QPair<QString, ushort>> RecentHashtagPack;
 DeclareRefSetting(RecentHashtagPack, RecentWriteHashtags);
 DeclareSetting(RecentHashtagPack, RecentSearchHashtags);
 
@@ -203,52 +152,16 @@ inline bool passcodeCanTry() {
 	return dt >= 30000;
 }
 
-inline void incrementRecentHashtag(RecentHashtagPack &recent, const QString &tag) {
-	RecentHashtagPack::iterator i = recent.begin(), e = recent.end();
-	for (; i != e; ++i) {
-		if (i->first == tag) {
-			++i->second;
-		if (qAbs(i->second) > 0x4000) {
-			for (RecentHashtagPack::iterator j = recent.begin(); j != e; ++j) {
-				if (j->second > 1) {
-					j->second /= 2;
-				} else if (j->second > 0) {
-					j->second = 1;
-				}
-			}
-		}
-			for (; i != recent.begin(); --i) {
-				if (qAbs((i - 1)->second) > qAbs(i->second)) {
-					break;
-				}
-				qSwap(*i, *(i - 1));
-			}
-			break;
-		}
-	}
-	if (i == e) {
-		while (recent.size() >= 64) recent.pop_back();
-		recent.push_back(qMakePair(tag, 1));
-		for (i = recent.end() - 1; i != recent.begin(); --i) {
-			if ((i - 1)->second > i->second) {
-				break;
-			}
-			qSwap(*i, *(i - 1));
-		}
-	}
-}
-
 DeclareSetting(QStringList, SendPaths);
 DeclareSetting(QString, StartUrl);
 
-DeclareSetting(bool, Retina);
 DeclareSetting(float64, RetinaFactor);
 DeclareSetting(int32, IntRetinaFactor);
 
 DeclareReadSetting(DBIPlatform, Platform);
 DeclareReadSetting(QString, PlatformString);
 DeclareReadSetting(bool, IsElCapitan);
-DeclareReadSetting(QUrl, UpdateURL);
+DeclareReadSetting(bool, IsSnowLeopard);
 
 DeclareSetting(int, OtherOnline);
 
@@ -271,4 +184,35 @@ DeclareSetting(int32, AutoDownloadAudio);
 DeclareSetting(int32, AutoDownloadGif);
 DeclareSetting(bool, AutoPlayGif);
 
-void settingsParseArgs(int argc, char *argv[]);
+constexpr auto kInterfaceScaleAuto = 0;
+constexpr auto kInterfaceScaleMin = 100;
+constexpr auto kInterfaceScaleDefault = 100;
+constexpr auto kInterfaceScaleMax = 300;
+
+inline int cEvalScale(int scale) {
+	return (scale == kInterfaceScaleAuto) ? cScreenScale() : scale;
+}
+
+inline int cScale() {
+	return cEvalScale(cRealScale());
+}
+
+template <typename T>
+inline T ConvertScale(T value, int scale) {
+	return (value < 0.)
+		? (-ConvertScale(-value, scale))
+		: T(std::round((float64(value) * scale / 100.) - 0.01));
+}
+
+template <typename T>
+inline T ConvertScale(T value) {
+	return ConvertScale(value, cScale());
+}
+
+inline void SetScaleChecked(int scale) {
+	const auto checked = (scale == kInterfaceScaleAuto)
+		? kInterfaceScaleAuto
+		: snap(scale, kInterfaceScaleMin, kInterfaceScaleMax / cIntRetinaFactor());
+	cSetConfigScale(checked);
+	cSetRealScale(checked);
+}

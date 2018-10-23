@@ -1,142 +1,39 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "core/basic_types.h"
-#include <array>
-#include <vector>
-#include <algorithm>
+#include "logs.h"
+#include "base/basic_types.h"
+#include "base/flags.h"
+#include "base/algorithm.h"
+#include "base/assertion.h"
+#include "base/bytes.h"
+
+#include <QtCore/QReadWriteLock>
+#include <QtCore/QRegularExpression>
+#include <QtNetwork/QNetworkProxy>
+
+#include <cmath>
 #include <set>
-#include <gsl/gsl>
 
-// Release build assertions.
-inline void t_noop() {
-}
-[[noreturn]] inline void t_assert_fail(const char *message, const char *file, int32 line) {
-	auto info = qsl("%1 %2:%3").arg(message).arg(file).arg(line);
-	LOG(("Assertion Failed! ") + info);
-	SignalHandlers::setCrashAnnotation("Assertion", info);
-
-	// Crash with access violation and generate crash report.
-	volatile int *t_assert_nullptr = nullptr;
-	*t_assert_nullptr = 0;
-
-	// Silent the possible failure to comply noreturn warning.
-	std::abort();
-}
-#define t_assert_full(condition, message, file, line) ((GSL_UNLIKELY(!(condition))) ? t_assert_fail(message, file, line) : t_noop())
-#define t_assert_c(condition, comment) t_assert_full(condition, "\"" #condition "\" (" comment ")", __FILE__, __LINE__)
-#define t_assert(condition) t_assert_full(condition, "\"" #condition "\"", __FILE__, __LINE__)
-
-// Declare our own versions of Expects() and Ensures().
-// Let them crash with reports and logging.
-#ifdef Expects
-#undef Expects
-#endif // Expects
-#define Expects(condition) t_assert_full(condition, "\"" #condition "\"", __FILE__, __LINE__)
-
-#ifdef Ensures
-#undef Ensures
-#endif // Ensures
-#define Ensures(condition) t_assert_full(condition, "\"" #condition "\"", __FILE__, __LINE__)
-
-#ifdef Unexpected
-#undef Unexpected
-#endif // Unexpected
-#define Unexpected(message) t_assert_fail("Unexpected: " message, __FILE__, __LINE__)
-
-// Define specializations for QByteArray for Qt 5.3.2, because
-// QByteArray in Qt 5.3.2 doesn't declare "pointer" subtype.
-#ifdef OS_MAC_OLD
-namespace gsl {
-
-template <>
-inline span<char> make_span<QByteArray>(QByteArray &cont) {
-	return span<char>(cont.data(), cont.size());
-}
-
-template <>
-inline span<const char> make_span(const QByteArray &cont) {
-	return span<const char>(cont.constData(), cont.size());
-}
-
-} // namespace gsl
-#endif // OS_MAC_OLD
+#define qsl(s) QStringLiteral(s)
 
 namespace base {
-
-template <typename T, size_t N>
-inline constexpr size_t array_size(const T(&)[N]) {
-	return N;
-}
-
-template <typename T>
-inline T take(T &source) {
-	return std::exchange(source, T());
-}
-
-namespace internal {
-
-template <typename D, typename T>
-inline constexpr D up_cast_helper(std::true_type, T object) {
-	return object;
-}
-
-template <typename D, typename T>
-inline constexpr D up_cast_helper(std::false_type, T object) {
-	return nullptr;
-}
-
-} // namespace internal
 
 template <typename D, typename T>
 inline constexpr D up_cast(T object) {
 	using DV = std::decay_t<decltype(*D())>;
 	using TV = std::decay_t<decltype(*T())>;
-	return internal::up_cast_helper<D>(std::integral_constant<bool, std::is_base_of<DV, TV>::value || std::is_same<DV, TV>::value>(), object);
-}
-
-template <typename Lambda>
-class scope_guard_helper {
-public:
-	scope_guard_helper(Lambda on_scope_exit) : _handler(std::move(on_scope_exit)) {
+	if constexpr (std::is_base_of_v<DV, TV>) {
+		return object;
+	} else {
+		return nullptr;
 	}
-	void dismiss() {
-		_dismissed = true;
-	}
-	~scope_guard_helper() {
-		if (!_dismissed) {
-			_handler();
-		}
-	}
-
-private:
-	Lambda _handler;
-	bool _dismissed = false;
-
-};
-
-template <typename Lambda>
-scope_guard_helper<Lambda> scope_guard(Lambda on_scope_exit) {
-	return scope_guard_helper<Lambda>(std::move(on_scope_exit));
 }
 
 template <typename Container, typename T>
@@ -189,31 +86,6 @@ using set_of_unique_ptr = std::set<std::unique_ptr<T>, base::pointer_comparator<
 template <typename T>
 using set_of_shared_ptr = std::set<std::shared_ptr<T>, base::pointer_comparator<T>>;
 
-using byte_span = gsl::span<gsl::byte>;
-using const_byte_span = gsl::span<const gsl::byte>;
-using byte_vector = std::vector<gsl::byte>;
-template <size_t N>
-using byte_array = std::array<gsl::byte, N>;
-
-inline void copy_bytes(byte_span destination, const_byte_span source) {
-	Expects(destination.size() >= source.size());
-	memcpy(destination.data(), source.data(), source.size());
-}
-
-inline void move_bytes(byte_span destination, const_byte_span source) {
-	Expects(destination.size() >= source.size());
-	memmove(destination.data(), source.data(), source.size());
-}
-
-inline void set_bytes(byte_span destination, gsl::byte value) {
-	memset(destination.data(), gsl::to_integer<unsigned char>(value), destination.size());
-}
-
-inline int compare_bytes(const_byte_span a, const_byte_span b) {
-	auto aSize = a.size(), bSize = b.size();
-	return (aSize > bSize) ? 1 : (aSize < bSize) ? -1 : memcmp(a.data(), b.data(), aSize);
-}
-
 // Thanks https://stackoverflow.com/a/28139075
 
 template <typename Container>
@@ -236,6 +108,11 @@ reversion_wrapper<Container> reversed(Container &&container) {
 	return { container };
 }
 
+template <typename Value, typename From, typename Till>
+inline bool in_range(Value &&value, From &&from, Till &&till) {
+	return (value >= from) && (value < till);
+}
+
 } // namespace base
 
 // using for_const instead of plain range-based for loop to ensure usage of const_iterator
@@ -243,11 +120,6 @@ reversion_wrapper<Container> reversed(Container &&container) {
 // if you have "QVector<T*> v" then "for (T * const p : v)" will still call QVector::detach(),
 // while "for_const (T *p, v)" won't and "for_const (T *&p, v)" won't compile
 #define for_const(range_declaration, range_expression) for (range_declaration : std::as_const(range_expression))
-
-template <typename Enum>
-inline constexpr QFlags<Enum> qFlags(Enum v) {
-	return QFlags<Enum>(v);
-}
 
 template <typename Lambda>
 inline void InvokeQueued(QObject *context, Lambda &&lambda) {
@@ -295,59 +167,14 @@ inline QByteArray str_const_toByteArray(const str_const &str) {
 	return QByteArray::fromRawData(str.c_str(), str.size());
 }
 
-template <typename T>
-inline void accumulate_max(T &a, const T &b) { if (a < b) a = b; }
-
-template <typename T>
-inline void accumulate_min(T &a, const T &b) { if (a > b) a = b; }
-
-class Exception : public std::exception {
-public:
-	Exception(const QString &msg, bool isFatal = true) : _fatal(isFatal), _msg(msg.toUtf8()) {
-		LOG(("Exception: %1").arg(msg));
-	}
-	bool fatal() const {
-		return _fatal;
-	}
-
-	virtual const char *what() const throw() {
-		return _msg.constData();
-	}
-	virtual ~Exception() throw() {
-	}
-
-private:
-	bool _fatal;
-	QByteArray _msg;
-
-};
-
-class MTPint;
-using TimeId = int32;
-TimeId myunixtime();
 void unixtimeInit();
-void unixtimeSet(TimeId servertime, bool force = false);
+void unixtimeSet(TimeId serverTime, bool force = false);
 TimeId unixtime();
-TimeId fromServerTime(const MTPint &serverTime);
-void toServerTime(const TimeId &clientTime, MTPint &outServerTime);
 uint64 msgid();
-int32 reqid();
+int GetNextRequestId();
 
-inline QDateTime date(int32 time = -1) {
-	QDateTime result;
-	if (time >= 0) result.setTime_t(time);
-	return result;
-}
-
-inline QDateTime dateFromServerTime(const MTPint &time) {
-	return date(fromServerTime(time));
-}
-
-inline QDateTime date(const MTPint &time) {
-	return dateFromServerTime(time);
-}
-
-QDateTime dateFromServerTime(TimeId time);
+QDateTime ParseDateTime(TimeId serverTime);
+TimeId ServerTimeFromParsed(const QDateTime &date);
 
 inline void mylocaltime(struct tm * _Tm, const time_t * _Time) {
 #ifdef Q_OS_WIN
@@ -364,7 +191,6 @@ void finish();
 
 }
 
-using TimeMs = int64;
 bool checkms(); // returns true if time has changed
 TimeMs getms(bool checked = false);
 
@@ -445,7 +271,7 @@ inline void memsetrnd_bad(T &value) {
 
 class ReadLockerAttempt {
 public:
-	ReadLockerAttempt(gsl::not_null<QReadWriteLock*> lock) : _lock(lock), _locked(_lock->tryLockForRead()) {
+	ReadLockerAttempt(not_null<QReadWriteLock*> lock) : _lock(lock), _locked(_lock->tryLockForRead()) {
 	}
 	ReadLockerAttempt(const ReadLockerAttempt &other) = delete;
 	ReadLockerAttempt &operator=(const ReadLockerAttempt &other) = delete;
@@ -467,7 +293,7 @@ public:
 	}
 
 private:
-	gsl::not_null<QReadWriteLock*> _lock;
+	not_null<QReadWriteLock*> _lock;
 	bool _locked = false;
 
 };
@@ -518,11 +344,6 @@ protected:
 QString translitRusEng(const QString &rus);
 QString rusKeyboardLayoutSwitch(const QString &from);
 
-enum DBISendKey {
-	dbiskEnter = 0,
-	dbiskCtrlEnter = 1,
-};
-
 enum DBINotifyView {
 	dbinvShowPreview = 0,
 	dbinvShowName = 1,
@@ -535,28 +356,37 @@ enum DBIWorkMode {
 	dbiwmWindowOnly = 2,
 };
 
-enum DBIConnectionType {
-	dbictAuto = 0,
-	dbictHttpAuto = 1, // not used
-	dbictHttpProxy = 2,
-	dbictTcpProxy = 3,
-};
-
 struct ProxyData {
+	enum class Type {
+		None,
+		Socks5,
+		Http,
+		Mtproto,
+	};
+
+	Type type = Type::None;
 	QString host;
 	uint32 port = 0;
 	QString user, password;
+
+	std::vector<QString> resolvedIPs;
+	TimeMs resolvedExpireAt = 0;
+
+	bool valid() const;
+	bool supportsCalls() const;
+	bool tryCustomResolve() const;
+	bytes::vector secretFromMtprotoPassword() const;
+	explicit operator bool() const;
+	bool operator==(const ProxyData &other) const;
+	bool operator!=(const ProxyData &other) const;
+
+	static bool ValidMtprotoPassword(const QString &secret);
+	static int MaxMtprotoPasswordLength();
+
 };
 
-enum DBIScale {
-	dbisAuto = 0,
-	dbisOne = 1,
-	dbisOneAndQuarter = 2,
-	dbisOneAndHalf = 3,
-	dbisTwo = 4,
-
-	dbisScaleCount = 5,
-};
+ProxyData ToDirectIpProxy(const ProxyData &proxy, int ipIndex = 0);
+QNetworkProxy ToNetworkProxy(const ProxyData &proxy);
 
 static const int MatrixRowShift = 40000;
 
@@ -577,45 +407,6 @@ enum DBIPeerReportSpamStatus {
 	dbiprsRequesting = 5, // requesting the cloud setting right now
 };
 
-template <int Size>
-inline QString strMakeFromLetters(const uint32 (&letters)[Size]) {
-	QString result;
-	result.reserve(Size);
-	for (int32 i = 0; i < Size; ++i) {
-		result.push_back(QChar((((letters[i] >> 16) & 0xFF) << 8) | (letters[i] & 0xFF)));
-	}
-	return result;
-}
-
-class MimeType {
-public:
-	enum class Known {
-		Unknown,
-		TDesktopTheme,
-		TDesktopPalette,
-		WebP,
-	};
-
-	MimeType(const QMimeType &type) : _typeStruct(type) {
-	}
-	MimeType(Known type) : _type(type) {
-	}
-	QStringList globPatterns() const;
-	QString filterString() const;
-	QString name() const;
-
-private:
-	QMimeType _typeStruct;
-	Known _type = Known::Unknown;
-
-};
-
-MimeType mimeTypeForName(const QString &mime);
-MimeType mimeTypeForFile(const QFileInfo &file);
-MimeType mimeTypeForData(const QByteArray &data);
-
-#include <cmath>
-
 inline int rowscount(int fullCount, int countPerRow) {
 	return (fullCount + countPerRow - 1) / countPerRow;
 }
@@ -632,33 +423,10 @@ inline int ceilclamp(float64 value, int32 step, int32 lowest, int32 highest) {
 	return qMax(qMin(static_cast<int>(std::ceil(value / step)), highest), lowest);
 }
 
-enum ForwardWhatMessages {
-	ForwardSelectedMessages,
-	ForwardContextMessage,
-	ForwardPressedMessage,
-	ForwardPressedLinkMessage
-};
-
-enum ShowLayerOption {
-	CloseOtherLayers = 0x00,
-	KeepOtherLayers = 0x01,
-	ShowAfterOtherLayers = 0x03,
-
-	AnimatedShowLayer = 0x00,
-	ForceFastShowLayer = 0x04,
-};
-Q_DECLARE_FLAGS(ShowLayerOptions, ShowLayerOption);
-Q_DECLARE_OPERATORS_FOR_FLAGS(ShowLayerOptions);
-
 static int32 FullArcLength = 360 * 16;
 static int32 QuarterArcLength = (FullArcLength / 4);
 static int32 MinArcLength = (FullArcLength / 360);
 static int32 AlmostFullArcLength = (FullArcLength - MinArcLength);
-
-template <typename T, typename... Args>
-inline QSharedPointer<T> MakeShared(Args&&... args) {
-	return QSharedPointer<T>(new T(std::forward<Args>(args)...));
-}
 
 // This pointer is used for global non-POD variables that are allocated
 // on demand by createIfNull(lambda) and are never automatically freed.
@@ -697,7 +465,7 @@ public:
 		return data();
 	}
 	T &operator*() const {
-		t_assert(!isNull());
+		Assert(!isNull());
 		return *data();
 	}
 	explicit operator bool() const {
@@ -740,7 +508,7 @@ public:
 		return data();
 	}
 	T &operator*() const {
-		t_assert(!isNull());
+		Assert(!isNull());
 		return *data();
 	}
 	explicit operator bool() const {

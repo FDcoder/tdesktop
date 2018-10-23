@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "codegen/style/parsed_file.h"
 
@@ -45,6 +32,7 @@ constexpr int kErrorAlreadyDefined     = 805;
 constexpr int kErrorBadString          = 806;
 constexpr int kErrorIconDuplicate      = 807;
 constexpr int kErrorBadIconModifier    = 808;
+constexpr int kErrorCyclicDependency   = 809;
 
 QString findInputFile(const Options &options) {
 	for (const auto &dir : options.includePaths) {
@@ -145,30 +133,34 @@ bool validateAlignString(const QString &value) {
 Modifier GetModifier(const QString &name) {
 	static QMap<QString, Modifier> modifiers;
 	if (modifiers.empty()) {
-		modifiers.insert("invert", [](QImage &png100x, QImage &png200x) {
-			png100x.invertPixels();
-			png200x.invertPixels();
+		modifiers.insert("invert", [](QImage &image) {
+			image.invertPixels();
 		});
-		modifiers.insert("flip_horizontal", [](QImage &png100x, QImage &png200x) {
-			png100x = png100x.mirrored(true, false);
-			png200x = png200x.mirrored(true, false);
+		modifiers.insert("flip_horizontal", [](QImage &image) {
+			image = image.mirrored(true, false);
 		});
-		modifiers.insert("flip_vertical", [](QImage &png100x, QImage &png200x) {
-			png100x = png100x.mirrored(false, true);
-			png200x = png200x.mirrored(false, true);
+		modifiers.insert("flip_vertical", [](QImage &image) {
+			image = image.mirrored(false, true);
 		});
 	}
 	return modifiers.value(name);
 }
 
-ParsedFile::ParsedFile(const Options &options)
+ParsedFile::ParsedFile(
+	const Options &options,
+	std::vector<QString> includeStack)
 : filePath_(findInputFile(options))
 , file_(filePath_)
-, options_(options) {
+, options_(options)
+, includeStack_(includeStack) {
 }
 
 bool ParsedFile::read() {
-	if (!file_.read()) {
+	if (std::find(begin(includeStack_), end(includeStack_), filePath_)
+		!= end(includeStack_)) {
+		logError(kErrorCyclicDependency) << "include cycle detected.";
+		return false;
+	} else if (!file_.read()) {
 		return false;
 	}
 
@@ -218,7 +210,11 @@ common::LogStream ParsedFile::logErrorTypeMismatch() {
 ParsedFile::ModulePtr ParsedFile::readIncluded() {
 	if (auto usingFile = assertNextToken(BasicType::String)) {
 		if (assertNextToken(BasicType::Semicolon)) {
-			ParsedFile included(includedOptions(tokenValue(usingFile)));
+			auto includeStack = includeStack_;
+			includeStack.push_back(filePath_);
+			ParsedFile included(
+				includedOptions(tokenValue(usingFile)),
+				includeStack);
 			if (included.read()) {
 				return included.getResult();
 			} else {

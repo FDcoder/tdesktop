@@ -1,35 +1,43 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <optional>
+
+inline bool operator<(std::nullopt_t, std::nullopt_t) {
+	return false;
+}
+inline bool operator>(std::nullopt_t, std::nullopt_t) {
+	return false;
+}
+inline bool operator<=(std::nullopt_t, std::nullopt_t) {
+	return true;
+}
+inline bool operator>=(std::nullopt_t, std::nullopt_t) {
+	return true;
+}
+inline bool operator==(std::nullopt_t, std::nullopt_t) {
+	return true;
+}
+inline bool operator!=(std::nullopt_t, std::nullopt_t) {
+	return false;
+}
+
 #include <mapbox/variant.hpp>
+#include <rpl/details/type_list.h>
+#include "base/match_method.h"
+#include "base/assertion.h"
 
 // We use base::variant<> alias and base::get_if() helper while we don't have std::variant<>.
 namespace base {
 
 template <typename... Types>
 using variant = mapbox::util::variant<Types...>;
-
-template <typename... Types>
-using optional_variant = variant<std::nullptr_t, Types...>;
 
 template <typename T, typename... Types>
 inline T *get_if(variant<Types...> *v) {
@@ -41,9 +49,79 @@ inline const T *get_if(const variant<Types...> *v) {
 	return (v && v->template is<T>()) ? &v->template get_unchecked<T>() : nullptr;
 }
 
-template <typename... Types>
-inline bool is_null_variant(const optional_variant<Types...> &variant) {
-	return get_if<std::nullptr_t>(&variant) != nullptr;
+namespace type_list = rpl::details::type_list;
+
+template <typename ...Types>
+struct normalized_variant {
+	using list = type_list::list<Types...>;
+	using distinct = type_list::distinct_t<list>;
+	using type = std::conditional_t<
+		type_list::size_v<distinct> == 1,
+		type_list::get_t<0, distinct>,
+		type_list::extract_to_t<distinct, base::variant>>;
+};
+
+template <typename ...Types>
+using normalized_variant_t
+	= typename normalized_variant<Types...>::type;
+
+template <typename TypeList, typename Variant, typename ...Methods>
+struct match_helper;
+
+template <
+	typename Type,
+	typename ...Types,
+	typename Variant,
+	typename ...Methods>
+struct match_helper<type_list::list<Type, Types...>, Variant, Methods...> {
+	static decltype(auto) call(Variant &value, Methods &&...methods) {
+		if (const auto v = get_if<Type>(&value)) {
+			return match_method(
+				*v,
+				std::forward<Methods>(methods)...);
+		}
+		return match_helper<
+			type_list::list<Types...>,
+			Variant,
+			Methods...>::call(
+				value,
+				std::forward<Methods>(methods)...);
+	}
+};
+
+template <
+	typename Type,
+	typename Variant,
+	typename ...Methods>
+struct match_helper<type_list::list<Type>, Variant, Methods...> {
+	static decltype(auto) call(Variant &value, Methods &&...methods) {
+		if (const auto v = get_if<Type>(&value)) {
+			return match_method(
+				*v,
+				std::forward<Methods>(methods)...);
+		}
+		Unexpected("Valueless variant in base::match().");
+	}
+};
+
+template <typename ...Types, typename ...Methods>
+inline decltype(auto) match(
+		variant<Types...> &value,
+		Methods &&...methods) {
+	return match_helper<
+		type_list::list<Types...>,
+		variant<Types...>,
+		Methods...>::call(value, std::forward<Methods>(methods)...);
+}
+
+template <typename ...Types, typename ...Methods>
+inline decltype(auto) match(
+		const variant<Types...> &value,
+		Methods &&...methods) {
+	return match_helper<
+		type_list::list<Types...>,
+		const variant<Types...>,
+		Methods...>::call(value, std::forward<Methods>(methods)...);
 }
 
 } // namespace base

@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 "lng_language_name" = "Italiano";
 "lng_switch_to_this" = "Passa all'Italiano";
@@ -206,19 +193,19 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 
 "lng_signin_title" = "Verifica password";
 "lng_signin_desc" = "Per favore inserisci la tua password.";
-"lng_signin_recover_desc" = "Per favore inserisci il codice dall'e-mail\n{email}";
+"lng_signin_recover_desc" = "Per favore inserisci il codice dall'email\n{email}";
 "lng_signin_password" = "La tua password";
-"lng_signin_code" = "Codice dall'e-mail";
+"lng_signin_code" = "Codice dall'email";
 "lng_signin_recover" = "Password dimenticata?";
 "lng_signin_recover_title" = "Ripristino password";
 "lng_signin_hint" = "Suggerimento: {password_hint}";
 "lng_signin_recover_hint" = "Il codice è stato inviato a {recover_email}";
 "lng_signin_bad_password" = "Hai inserito una password errata.";
 "lng_signin_wrong_code" = "Hai inserito un codice non valido.";
-"lng_signin_try_password" = "Hai problemi ad accedere alla tua e-mail?";
+"lng_signin_try_password" = "Hai problemi ad accedere alla tua email?";
 "lng_signin_password_removed" = "La tua password è stata disattivata.\nNe puoi impostare una nuova dalle Impostazioni.";
 "lng_signin_no_email_forgot" = "Siccome non hai fornito un'email di recupero quando hai inserito la password, non ti resta che ricordarti la password o ripristinare il tuo account.";
-"lng_signin_cant_email_forgot" = "Se non puoi recuperare l'accesso all'e-mail, non ti resta che ricordarti la password o ripristinare il tuo account.";
+"lng_signin_cant_email_forgot" = "Se non puoi recuperare l'accesso all'email, non ti resta che ricordarti la password o ripristinare il tuo account.";
 "lng_signin_reset_account" = "Ripristina il tuo account";
 "lng_signin_sure_reset" = "Attenzione!\n\nPerderai tutte le chat e i messaggi, insieme a tutti i media e i file condivisi!\n\nVuoi ripristinare il tuo account?";
 "lng_signin_reset" = "Ripristina";
@@ -246,10 +233,10 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 "lng_no_chats" = "Le tua chat saranno qui";
 "lng_contacts_loading" = "Carico...";
 "lng_contacts_not_found" = "Nessun contatto trovato";
-"lng_dlg_search_chat" = "Cerca in questa chat";
-"lng_dlg_search_channel" = "Cerca in questo canale";
 "lng_dlg_search_for_messages" = "Cerca messaggi";
 "lng_update_telegram" = "Aggiorna Telegram";
+"lng_dlg_search_in" = "Cerca messaggi in";
+"lng_dlg_search_from" = "Da: {user}";
 
 "lng_settings_save" = "Salva";
 "lng_settings_upload" = "Imposta foto profilo";
@@ -420,11 +407,11 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 "lng_cloud_password_change_hint" = "Inserisci un nuovo suggerimento";
 "lng_cloud_password_bad" = "Password e suggerimento devono essere diversi.";
 "lng_cloud_password_email" = "Inserisci email di recupero";
-"lng_cloud_password_bad_email" = "E-mail non valida, riprova con un'altra.";
+"lng_cloud_password_bad_email" = "email non valida, riprova con un'altra.";
 "lng_cloud_password_about" = "La password sarà richiesta quando ti connetti da un nuovo dispositivo insieme al codice.";
-"lng_cloud_password_about_recover" = "Attenzione! Sicuro di non voler\naggiungere un'e-mail di recupero?\n\nSe dimentichi la tua password, perderai\nl'accesso al tuo account Telegram.";
-"lng_cloud_password_skip_email" = "Salta e-mail";
-"lng_cloud_password_almost" = "Abbiamo inviato un link di conferma\nall'e-mail che ci hai fornito. La verifica in due passaggi sarà attivata non appena aprirai quel link.";
+"lng_cloud_password_about_recover" = "Attenzione! Sicuro di non voler\naggiungere un'email di recupero?\n\nSe dimentichi la tua password, perderai\nl'accesso al tuo account Telegram.";
+"lng_cloud_password_skip_email" = "Salta email";
+"lng_cloud_password_almost" = "Abbiamo inviato un link di conferma\nall'email che ci hai fornito. La verifica in due passaggi sarà attivata non appena aprirai quel link.";
 "lng_cloud_password_was_set" = "Verifica in due passaggi abilitata.";
 "lng_cloud_password_updated" = "La tua password è stata aggiornata.";
 "lng_cloud_password_removed" = "La verifica in due passaggi è stata disattivata.";
@@ -549,6 +536,10 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 "lng_change_phone_code_title" = "Inserisci il codice";
 "lng_change_phone_code_description" = "Abbiamo inviato un SMS con un codice di conferma al tuo numero {phone}.";
 "lng_change_phone_success" = "Il tuo numero di telefono è stato cambiato.";
+
+"lng_mute_duration_hours#one" = "Per {count} ora";
+"lng_mute_duration_hours#other" = "Per {count} ore";
+"lng_mute_box_tip" = "Scegli la durata della disattivazione delle notifiche per la chat seguente";
 
 "lng_preview_loading" = "Recupero le info del link...";
 
@@ -880,6 +871,13 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 "lng_emoji_hide_panel" = "Clicca qui per nascondere la barra delle emoji";
 
 "lng_recent_stickers" = "Usati di frequente";
+"lng_faved_stickers" = "Sticker preferiti";
+"lng_faved_stickers_add" = "Aggiungi ai preferiti";
+"lng_faved_stickers_remove" = "Rimuovi dai preferiti";
+"lng_group_stickers" = "Sticker del gruppo";
+"lng_group_stickers_description" = "Puoi rendere un set di sticker disponibile a tutti i membri che scrivono all'interno di questo gruppo.";
+"lng_group_stickers_add" = "Scegli set di sticker";
+
 "lng_switch_stickers" = "Sticker";
 "lng_switch_emoji" = "Emoji";
 "lng_switch_gifs" = "GIF";
@@ -909,6 +907,9 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 "lng_stickers_count#one" = "{count} sticker";
 "lng_stickers_count#other" = "{count} sticker";
 "lng_stickers_masks_pack" = "Questo è un set di maschere. Puoi usarle nell'editor fotografico sulle nostre app mobili.";
+"lng_stickers_group_set" = "Sticker del gruppo";
+"lng_stickers_remove_group_set" = "Rimuovere il set di sticker del gruppo?";
+"lng_stickers_group_from_your" = "Scegli dai tuoi sticker";
 
 "lng_in_dlg_photo" = "Foto";
 "lng_in_dlg_video" = "Video";
@@ -986,13 +987,13 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 "lng_typing" = "sta scrivendo";
 "lng_user_typing" = "{user} sta scrivendo";
 "lng_users_typing" = "{user} e {second_user} stanno scrivendo";
-"lng_many_typing#one" = "{count} sta scrivendo";
-"lng_many_typing#other" = "{count} stanno scrivendo";
+"lng_many_typing#one" = "{count} persona sta scrivendo";
+"lng_many_typing#other" = "{count} persone stanno scrivendo";
 "lng_playing_game" = "sta giocando a un gioco";
 "lng_user_playing_game" = "{user} sta giocando a un gioco";
 "lng_users_playing_game" = "{user} e {second_user} stanno giocando a un gioco";
-"lng_many_playing_game#one" = "{count} sta giocando a un gioco";
-"lng_many_playing_game#other" = "{count} stanno giocando a un gioco";
+"lng_many_playing_game#one" = "{count} persona sta giocando a un gioco";
+"lng_many_playing_game#other" = "{count} persone stanno giocando a un gioco";
 "lng_send_action_record_video" = "sta registrando un video";
 "lng_user_action_record_video" = "{user} sta registrando un video";
 "lng_send_action_upload_video" = "sta inviando un video";
@@ -1399,6 +1400,9 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 "lng_admin_log_banned" = "ha bloccato {user}";
 "lng_admin_log_restricted" = "ha cambiato le restrizioni di {user} {until}";
 "lng_admin_log_promoted" = "ha cambiato i privilegi di {user}";
+"lng_admin_log_changed_stickers_group" = "{from} ha cambiato il {sticker_set} del gruppo";
+"lng_admin_log_changed_stickers_set" = "set di sticker";
+"lng_admin_log_removed_stickers_group" = "{from} ha rimosso il set di sticker del gruppo";
 "lng_admin_log_user_with_username" = "{name} ({mention})";
 "lng_admin_log_restricted_forever" = "indefinitamente";
 "lng_admin_log_restricted_until" = "fino a {date}";
@@ -1423,6 +1427,8 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 "lng_profile_group_info" = "Info gruppo";
 "lng_profile_channel_info" = "Info canale";
 "lng_channel_add_admins" = "Nuovo amministratore";
+"lng_dlg_search_chat" = "Cerca in questa chat";
+"lng_dlg_search_channel" = "Cerca in questo canale";
 
 // Wnd specific
 

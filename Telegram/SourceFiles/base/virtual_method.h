@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -84,7 +71,7 @@ template <typename Object, void (*Creator)(const child_entry &)>
 class object_registrator {
 public:
 	inline object_registrator() {
-		t_assert(!first_dispatch_fired());
+		Assert(!first_dispatch_fired());
 		Creator(child_entry {
 			&is_parent<Object>::check,
 			&_index,
@@ -701,7 +688,7 @@ private:
 	class virtual_override_registrator {
 	public:
 		inline virtual_override_registrator() {
-			t_assert(!virtual_methods::first_dispatch_fired());
+			Assert(!virtual_methods::first_dispatch_fired());
 			BaseMethod::template virtual_method_register_override<ConcreteMethod>();
 		}
 

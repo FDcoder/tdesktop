@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "calls/calls_box_controller.h"
 
@@ -26,7 +13,12 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "observer_peer.h"
 #include "ui/effects/ripple_animation.h"
 #include "calls/calls_instance.h"
-#include "history/history_media_types.h"
+#include "history/history.h"
+#include "history/history_item.h"
+#include "mainwidget.h"
+#include "auth_session.h"
+#include "data/data_session.h"
+#include "data/data_media_types.h"
 
 namespace Calls {
 namespace {
@@ -38,7 +30,7 @@ constexpr auto kPerPageCount = 100;
 
 class BoxController::Row : public PeerListRow {
 public:
-	Row(HistoryItem *item);
+	Row(not_null<HistoryItem*> item);
 
 	enum class Type {
 		Out,
@@ -46,18 +38,20 @@ public:
 		Missed,
 	};
 
-	bool canAddItem(HistoryItem *item) const {
-		return (ComputeType(item) == _type && item->date.date() == _date);
+	bool canAddItem(not_null<const HistoryItem*> item) const {
+		return (ComputeType(item) == _type)
+			&& (ItemDateTime(item).date() == _date);
 	}
-	void addItem(HistoryItem *item) {
+	void addItem(not_null<HistoryItem*> item) {
 		Expects(canAddItem(item));
+
 		_items.push_back(item);
-		std::sort(_items.begin(), _items.end(), [](HistoryItem *a, HistoryItem *b) {
+		ranges::sort(_items, [](not_null<HistoryItem*> a, auto b) {
 			return (a->id > b->id);
 		});
 		refreshStatus();
 	}
-	void itemRemoved(HistoryItem *item) {
+	void itemRemoved(not_null<const HistoryItem*> item) {
 		if (hasItems() && item->id >= minItemId() && item->id <= maxItemId()) {
 			_items.erase(std::remove(_items.begin(), _items.end(), item), _items.end());
 			refreshStatus();
@@ -77,26 +71,44 @@ public:
 		return _items.front()->id;
 	}
 
-	void paintStatusText(Painter &p, int x, int y, int availableWidth, int outerWidth, bool selected) override;
-	void addActionRipple(QPoint point, base::lambda<void()> updateCallback) override;
+	void paintStatusText(
+		Painter &p,
+		const style::PeerListItem &st,
+		int x,
+		int y,
+		int availableWidth,
+		int outerWidth,
+		bool selected) override;
+	void addActionRipple(QPoint point, Fn<void()> updateCallback) override;
 	void stopLastActionRipple() override;
 
-	bool needsVerifiedIcon() const override {
-		return false;
+	int nameIconWidth() const override {
+		return 0;
 	}
 	QSize actionSize() const override {
 		return peer()->isUser() ? QSize(st::callReDial.width, st::callReDial.height) : QSize();
 	}
 	QMargins actionMargins() const override {
-		return QMargins(0, 0, 0, 0);
+		return QMargins(
+			0,
+			0,
+			st::defaultPeerListItem.photoPosition.x(),
+			0);
 	}
-	void paintAction(Painter &p, TimeMs ms, int x, int y, int outerWidth, bool actionSelected) override;
+	void paintAction(
+		Painter &p,
+		TimeMs ms,
+		int x,
+		int y,
+		int outerWidth,
+		bool selected,
+		bool actionSelected) override;
 
 private:
 	void refreshStatus();
-	static Type ComputeType(HistoryItem *item);
+	static Type ComputeType(not_null<const HistoryItem*> item);
 
-	std::vector<HistoryItem*> _items;
+	std::vector<not_null<HistoryItem*>> _items;
 	QDate _date;
 	Type _type;
 
@@ -104,14 +116,15 @@ private:
 
 };
 
-BoxController::Row::Row(HistoryItem *item) : PeerListRow(item->history()->peer, item->id)
+BoxController::Row::Row(not_null<HistoryItem*> item)
+: PeerListRow(item->history()->peer, item->id)
 , _items(1, item)
-, _date(item->date.date())
+, _date(ItemDateTime(item).date())
 , _type(ComputeType(item)) {
 	refreshStatus();
 }
 
-void BoxController::Row::paintStatusText(Painter &p, int x, int y, int availableWidth, int outerWidth, bool selected) {
+void BoxController::Row::paintStatusText(Painter &p, const style::PeerListItem &st, int x, int y, int availableWidth, int outerWidth, bool selected) {
 	auto icon = ([this] {
 		switch (_type) {
 		case Type::In: return &st::callArrowIn;
@@ -125,10 +138,17 @@ void BoxController::Row::paintStatusText(Painter &p, int x, int y, int available
 	x += shift;
 	availableWidth -= shift;
 
-	PeerListRow::paintStatusText(p, x, y, availableWidth, outerWidth, selected);
+	PeerListRow::paintStatusText(p, st, x, y, availableWidth, outerWidth, selected);
 }
 
-void BoxController::Row::paintAction(Painter &p, TimeMs ms, int x, int y, int outerWidth, bool actionSelected) {
+void BoxController::Row::paintAction(
+		Painter &p,
+		TimeMs ms,
+		int x,
+		int y,
+		int outerWidth,
+		bool selected,
+		bool actionSelected) {
 	auto size = actionSize();
 	if (_actionRipple) {
 		_actionRipple->paint(p, x + st::callReDial.rippleAreaPosition.x(), y + st::callReDial.rippleAreaPosition.y(), outerWidth, ms);
@@ -144,7 +164,7 @@ void BoxController::Row::refreshStatus() {
 		return;
 	}
 	auto text = [this] {
-		auto time = _items.front()->date.time().toString(cTimeFormat());
+		auto time = ItemDateTime(_items.front()).time().toString(cTimeFormat());
 		auto today = QDateTime::currentDateTime().date();
 		if (_date == today) {
 			return lng_call_box_status_today(lt_time, time);
@@ -156,13 +176,15 @@ void BoxController::Row::refreshStatus() {
 	setCustomStatus((_items.size() > 1) ? lng_call_box_status_group(lt_count, QString::number(_items.size()), lt_status, text()) : text());
 }
 
-BoxController::Row::Type BoxController::Row::ComputeType(HistoryItem *item) {
+BoxController::Row::Type BoxController::Row::ComputeType(
+		not_null<const HistoryItem*> item) {
 	if (item->out()) {
 		return Type::Out;
-	} else if (auto media = item->getMedia()) {
-		if (media->type() == MediaTypeCall) {
-			auto reason = static_cast<HistoryCall*>(media)->reason();
-			if (reason == HistoryCall::FinishReason::Busy || reason == HistoryCall::FinishReason::Missed) {
+	} else if (auto media = item->media()) {
+		if (const auto call = media->call()) {
+			const auto reason = call->finishReason;
+			if (reason == Data::Call::FinishReason::Busy
+				|| reason == Data::Call::FinishReason::Missed) {
 				return Type::Missed;
 			}
 		}
@@ -170,7 +192,7 @@ BoxController::Row::Type BoxController::Row::ComputeType(HistoryItem *item) {
 	return Type::In;
 }
 
-void BoxController::Row::addActionRipple(QPoint point, base::lambda<void()> updateCallback) {
+void BoxController::Row::addActionRipple(QPoint point, Fn<void()> updateCallback) {
 	if (!_actionRipple) {
 		auto mask = Ui::RippleAnimation::ellipseMask(QSize(st::callReDial.rippleAreaSize, st::callReDial.rippleAreaSize));
 		_actionRipple = std::make_unique<Ui::RippleAnimation>(st::callReDial.ripple, std::move(mask), std::move(updateCallback));
@@ -185,7 +207,8 @@ void BoxController::Row::stopLastActionRipple() {
 }
 
 void BoxController::prepare() {
-	subscribe(Global::RefItemRemoved(), [this](HistoryItem *item) {
+	Auth().data().itemRemoved(
+	) | rpl::start_with_next([this](auto item) {
 		if (auto row = rowForItem(item)) {
 			row->itemRemoved(item);
 			if (!row->hasItems()) {
@@ -196,7 +219,7 @@ void BoxController::prepare() {
 			}
 			delegate()->peerListRefreshRows();
 		}
-	});
+	}, lifetime());
 	subscribe(Current().newServiceMessage(), [this](const FullMsgId &msgId) {
 		if (auto item = App::histItemById(msgId)) {
 			insertRow(item, InsertWay::Prepend);
@@ -215,7 +238,21 @@ void BoxController::loadMoreRows() {
 		return;
 	}
 
-	_loadRequestId = request(MTPmessages_Search(MTP_flags(0), MTP_inputPeerEmpty(), MTP_string(QString()), MTP_inputUserEmpty(), MTP_inputMessagesFilterPhoneCalls(MTP_flags(0)), MTP_int(0), MTP_int(0), MTP_int(0), MTP_int(_offsetId), MTP_int(_offsetId ? kFirstPageCount : kPerPageCount))).done([this](const MTPmessages_Messages &result) {
+	_loadRequestId = request(MTPmessages_Search(
+		MTP_flags(0),
+		MTP_inputPeerEmpty(),
+		MTP_string(QString()),
+		MTP_inputUserEmpty(),
+		MTP_inputMessagesFilterPhoneCalls(MTP_flags(0)),
+		MTP_int(0),
+		MTP_int(0),
+		MTP_int(_offsetId),
+		MTP_int(0),
+		MTP_int(_offsetId ? kFirstPageCount : kPerPageCount),
+		MTP_int(0),
+		MTP_int(0),
+		MTP_int(0)
+	)).done([this](const MTPmessages_Messages &result) {
 		_loadRequestId = 0;
 
 		auto handleResult = [this](auto &data) {
@@ -231,7 +268,9 @@ void BoxController::loadMoreRows() {
 			LOG(("API Error: received messages.channelMessages! (Calls::BoxController::preloadRows)"));
 			handleResult(result.c_messages_channelMessages());
 		} break;
-
+		case mtpc_messages_messagesNotModified: {
+			LOG(("API Error: received messages.messagesNotModified! (Calls::BoxController::preloadRows)"));
+		} break;
 		default: Unexpected("Type of messages.Messages (Calls::BoxController::preloadRows)");
 		}
 	}).fail([this](const RPCError &error) {
@@ -243,15 +282,17 @@ void BoxController::refreshAbout() {
 	setDescriptionText(delegate()->peerListFullRowsCount() ? QString() : lang(lng_call_box_about));
 }
 
-void BoxController::rowClicked(gsl::not_null<PeerListRow*> row) {
+void BoxController::rowClicked(not_null<PeerListRow*> row) {
 	auto itemsRow = static_cast<Row*>(row.get());
 	auto itemId = itemsRow->maxItemId();
-	Ui::showPeerHistoryAsync(row->peer()->id, itemId);
+	InvokeQueued(App::main(), [peerId = row->peer()->id, itemId] {
+		Ui::showPeerHistory(peerId, itemId);
+	});
 }
 
-void BoxController::rowActionClicked(gsl::not_null<PeerListRow*> row) {
+void BoxController::rowActionClicked(not_null<PeerListRow*> row) {
 	auto user = row->peer()->asUser();
-	t_assert(user != nullptr);
+	Assert(user != nullptr);
 
 	Current().startOutgoingCall(user);
 }
@@ -277,21 +318,28 @@ void BoxController::receivedCalls(const QVector<MTPMessage> &result) {
 	delegate()->peerListRefreshRows();
 }
 
-bool BoxController::insertRow(HistoryItem *item, InsertWay way) {
+bool BoxController::insertRow(
+		not_null<HistoryItem*> item,
+		InsertWay way) {
 	if (auto row = rowForItem(item)) {
 		if (row->canAddItem(item)) {
 			row->addItem(item);
 			return false;
 		}
 	}
-	(way == InsertWay::Append) ? delegate()->peerListAppendRow(createRow(item)) : delegate()->peerListPrependRow(createRow(item));
-	delegate()->peerListSortRows([](PeerListRow &a, PeerListRow &b) {
-		return static_cast<Row&>(a).maxItemId() > static_cast<Row&>(b).maxItemId();
+	(way == InsertWay::Append)
+		? delegate()->peerListAppendRow(createRow(item))
+		: delegate()->peerListPrependRow(createRow(item));
+	delegate()->peerListSortRows([](
+			const PeerListRow &a,
+			const PeerListRow &b) {
+		return static_cast<const Row&>(a).maxItemId()
+			> static_cast<const Row&>(b).maxItemId();
 	});
 	return true;
 }
 
-BoxController::Row *BoxController::rowForItem(HistoryItem *item) {
+BoxController::Row *BoxController::rowForItem(not_null<const HistoryItem*> item) {
 	auto v = delegate();
 	if (auto fullRowsCount = v->peerListFullRowsCount()) {
 		auto itemId = item->id;
@@ -323,7 +371,7 @@ BoxController::Row *BoxController::rowForItem(HistoryItem *item) {
 		// In that case we sometimes need to return rowAt(left + 1), not rowAt(left).
 		if (result->minItemId() > itemId && left + 1 < fullRowsCount) {
 			auto possibleResult = static_cast<Row*>(v->peerListRowAt(left + 1).get());
-			t_assert(possibleResult->maxItemId() < itemId);
+			Assert(possibleResult->maxItemId() < itemId);
 			if (possibleResult->canAddItem(item)) {
 				return possibleResult;
 			}
@@ -333,7 +381,8 @@ BoxController::Row *BoxController::rowForItem(HistoryItem *item) {
 	return nullptr;
 }
 
-std::unique_ptr<PeerListRow> BoxController::createRow(HistoryItem *item) const {
+std::unique_ptr<PeerListRow> BoxController::createRow(
+		not_null<HistoryItem*> item) const {
 	auto row = std::make_unique<Row>(item);
 	return std::move(row);
 }

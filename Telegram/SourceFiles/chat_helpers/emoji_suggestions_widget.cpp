@@ -1,31 +1,19 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/emoji_suggestions_widget.h"
 
 #include "chat_helpers/emoji_suggestions_helper.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/widgets/shadow.h"
+#include "ui/widgets/inner_dropdown.h"
+#include "ui/emoji_config.h"
 #include "platform/platform_specific.h"
 #include "styles/style_chat_helpers.h"
-#include "ui/widgets/inner_dropdown.h"
 
 namespace Ui {
 namespace Emoji {
@@ -37,14 +25,14 @@ constexpr auto kRowLimit = 5;
 
 class SuggestionsWidget::Row {
 public:
-	Row(gsl::not_null<EmojiPtr> emoji, const QString &label, const QString &replacement);
+	Row(not_null<EmojiPtr> emoji, const QString &label, const QString &replacement);
 	Row(const Row &other) = delete;
 	Row &operator=(const Row &other) = delete;
 	Row(Row &&other) = default;
 	Row &operator=(Row &&other) = default;
 	~Row();
 
-	gsl::not_null<EmojiPtr> emoji() const {
+	not_null<EmojiPtr> emoji() const {
 		return _emoji;
 	}
 	const QString &label() const {
@@ -64,14 +52,14 @@ public:
 	}
 
 private:
-	gsl::not_null<EmojiPtr> _emoji;
+	not_null<EmojiPtr> _emoji;
 	QString _label;
 	QString _replacement;
 	std::unique_ptr<RippleAnimation> _ripple;
 
 };
 
-SuggestionsWidget::Row::Row(gsl::not_null<EmojiPtr> emoji, const QString &label, const QString &replacement)
+SuggestionsWidget::Row::Row(not_null<EmojiPtr> emoji, const QString &label, const QString &replacement)
 : _emoji(emoji)
 , _label(label)
 , _replacement(replacement) {
@@ -189,24 +177,29 @@ void SuggestionsWidget::paintEvent(QPaintEvent *e) {
 	if (clip.intersects(topskip)) p.fillRect(clip.intersected(topskip), _st->itemBg);
 	if (clip.intersects(bottomskip)) p.fillRect(clip.intersected(bottomskip), _st->itemBg);
 
-	auto top = _st->skip;
+	const auto top = _st->skip;
 	p.setFont(_st->itemFont);
-	auto from = floorclamp(clip.top() - top, _rowHeight, 0, _rows.size());
-	auto to = ceilclamp(clip.top() + clip.height() - top, _rowHeight, 0, _rows.size());
+	const auto from = floorclamp(clip.top() - top, _rowHeight, 0, _rows.size());
+	const auto to = ceilclamp(clip.top() + clip.height() - top, _rowHeight, 0, _rows.size());
 	p.translate(0, top + from * _rowHeight);
 	for (auto i = from; i != to; ++i) {
 		auto &row = _rows[i];
-		auto selected = (i == _selected || i == _pressed);
+		const auto selected = (i == _selected || i == _pressed);
 		p.fillRect(0, 0, width(), _rowHeight, selected ? _st->itemBgOver : _st->itemBg);
-		if (auto ripple = row.ripple()) {
+		if (const auto ripple = row.ripple()) {
 			ripple->paint(p, 0, 0, width(), ms);
 			if (ripple->empty()) {
 				row.resetRipple();
 			}
 		}
-		auto emoji = row.emoji();
-		auto esize = Ui::Emoji::Size(Ui::Emoji::Index() + 1);
-		p.drawPixmapLeft((_st->itemPadding.left() - (esize / cIntRetinaFactor())) / 2, (_rowHeight - (esize / cIntRetinaFactor())) / 2, width(), App::emojiLarge(), QRect(emoji->x() * esize, emoji->y() * esize, esize, esize));
+		const auto emoji = row.emoji();
+		const auto esize = Ui::Emoji::GetSizeLarge();
+		Ui::Emoji::Draw(
+			p,
+			emoji,
+			esize,
+			(_st->itemPadding.left() - (esize / cIntRetinaFactor())) / 2,
+			(_rowHeight - (esize / cIntRetinaFactor())) / 2);
 		p.setPen(selected ? _st->itemFgOver : _st->itemFg);
 		p.drawTextLeft(_st->itemPadding.left(), _st->itemPadding.top(), width(), row.label());
 		p.translate(0, _rowHeight);
@@ -359,11 +352,14 @@ void SuggestionsWidget::leaveEventHook(QEvent *e) {
 	return TWidget::leaveEventHook(e);
 }
 
-SuggestionsController::SuggestionsController(QWidget *parent, gsl::not_null<QTextEdit*> field) : QObject(nullptr)
+SuggestionsController::SuggestionsController(QWidget *parent, not_null<QTextEdit*> field)
+: QObject(nullptr)
 , _field(field)
 , _container(parent, st::emojiSuggestionsDropdown)
 , _suggestions(_container->setOwnedWidget(object_ptr<Ui::Emoji::SuggestionsWidget>(parent, st::emojiSuggestionsMenu))) {
 	_container->setAutoHiding(false);
+
+	setReplaceCallback(nullptr);
 
 	_field->installEventFilter(this);
 	connect(_field, &QTextEdit::textChanged, this, [this] { handleTextChange(); });
@@ -374,6 +370,23 @@ SuggestionsController::SuggestionsController(QWidget *parent, gsl::not_null<QTex
 	updateForceHidden();
 
 	handleTextChange();
+}
+
+void SuggestionsController::setReplaceCallback(
+	Fn<void(
+		int from,
+		int till,
+		const QString &replacement)> callback) {
+	if (callback) {
+		_replaceCallback = std::move(callback);
+	} else {
+		_replaceCallback = [=](int from, int till, const QString &replacement) {
+			auto cursor = _field->textCursor();
+			cursor.setPosition(from);
+			cursor.setPosition(till, QTextCursor::KeepAnchor);
+			cursor.insertText(replacement);
+		};
+	}
 }
 
 void SuggestionsController::handleTextChange() {
@@ -387,16 +400,16 @@ void SuggestionsController::handleTextChange() {
 }
 
 QString SuggestionsController::getEmojiQuery() {
-	if (!cReplaceEmojis()) {
+	if (!Global::SuggestEmoji()) {
 		return QString();
 	}
 
 	auto cursor = _field->textCursor();
-	auto position = _field->textCursor().position();
-	if (cursor.anchor() != position) {
+	if (cursor.hasSelection()) {
 		return QString();
 	}
 
+	auto position = cursor.position();
 	auto findTextPart = [this, &position] {
 		auto document = _field->document();
 		auto block = document->findBlock(position);
@@ -424,13 +437,26 @@ QString SuggestionsController::getEmojiQuery() {
 		return QString();
 	}
 
-	auto isSuggestionChar = [](QChar ch) {
-		return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || (ch == '_') || (ch == '-') || (ch == '+');
+	const auto isUpperCaseLetter = [](QChar ch) {
+		return (ch >= 'A' && ch <= 'Z');
 	};
-	auto isGoodCharBeforeSuggestion = [isSuggestionChar](QChar ch) {
+	const auto isLetter = [](QChar ch) {
+		return (ch >= 'a' && ch <= 'z')
+			|| (ch >= 'A' && ch <= 'Z')
+			|| (ch >= '0' && ch <= '9');
+	};
+	const auto isSuggestionChar = [](QChar ch) {
+		return (ch >= 'a' && ch <= 'z')
+			|| (ch >= 'A' && ch <= 'Z')
+			|| (ch >= '0' && ch <= '9')
+			|| (ch == '_')
+			|| (ch == '-')
+			|| (ch == '+');
+	};
+	const auto isGoodCharBeforeSuggestion = [&](QChar ch) {
 		return !isSuggestionChar(ch) || (ch == 0);
 	};
-	t_assert(position > 0 && position <= text.size());
+	Assert(position > 0 && position <= text.size());
 	for (auto i = position; i != 0;) {
 		auto ch = text[--i];
 		if (ch == ':') {
@@ -440,7 +466,22 @@ QString SuggestionsController::getEmojiQuery() {
 				if (position > i + 1) {
 					// Skip colon and the first letter.
 					_queryStartPosition += i + 2;
-					return text.mid(i, position - i);
+					const auto length = position - i;
+					auto result = text.mid(i, length);
+					const auto upperCaseLetters = std::count_if(
+						result.begin(),
+						result.end(),
+						isUpperCaseLetter);
+					const auto letters = std::count_if(
+						result.begin(),
+						result.end(),
+						isLetter);
+					if (letters == upperCaseLetters && letters == 1) {
+						// No upper case single letter suggestions.
+						// We don't want to suggest emoji on :D and :-P
+						return QString();
+					}
+					return result.toLower();
 				}
 			}
 			return QString();
@@ -456,24 +497,14 @@ QString SuggestionsController::getEmojiQuery() {
 }
 
 void SuggestionsController::replaceCurrent(const QString &replacement) {
-	auto cursor = _field->textCursor();
 	auto suggestion = getEmojiQuery();
 	if (suggestion.isEmpty()) {
 		_suggestions->showWithQuery(QString());
 	} else {
-		cursor.setPosition(cursor.position() - suggestion.size(), QTextCursor::KeepAnchor);
-		cursor.insertText(replacement);
-	}
-
-	auto emojiText = GetSuggestionEmoji(QStringToUTF16(replacement));
-	if (auto emoji = Find(QStringFromUTF16(emojiText))) {
-		if (emoji->hasVariants()) {
-			auto it = cEmojiVariants().constFind(emoji->nonColoredId());
-			if (it != cEmojiVariants().cend()) {
-				emoji = emoji->variant(it.value());
-			}
-		}
-		AddRecent(emoji);
+		const auto cursor = _field->textCursor();
+		const auto position = cursor.position();
+		const auto from = position - suggestion.size();
+		_replaceCallback(from, position, replacement);
 	}
 }
 

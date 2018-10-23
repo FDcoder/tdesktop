@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -25,7 +12,6 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 namespace Ui {
 
 class InnerDropdown;
-class FlatTextarea;
 
 namespace Emoji {
 
@@ -65,7 +51,7 @@ private:
 	void triggerSelectedRow();
 	void triggerRow(const Row &row);
 
-	gsl::not_null<const style::Menu*> _st;
+	not_null<const style::Menu*> _st;
 
 	QString _query;
 	std::vector<Row> _rows;
@@ -79,9 +65,13 @@ private:
 
 class SuggestionsController : public QObject, private base::Subscriber {
 public:
-	SuggestionsController(QWidget *parent, gsl::not_null<QTextEdit*> field);
+	SuggestionsController(QWidget *parent, not_null<QTextEdit*> field);
 
 	void raise();
+	void setReplaceCallback(Fn<void(
+		int from,
+		int till,
+		const QString &replacement)> callback);
 
 protected:
 	bool eventFilter(QObject *object, QEvent *event) override;
@@ -101,6 +91,10 @@ private:
 	bool _ignoreCursorPositionChange = false;
 	bool _textChangeAfterKeyPress = false;
 	QPointer<QTextEdit> _field;
+	Fn<void(
+		int from,
+		int till,
+		const QString &replacement)> _replaceCallback;
 	object_ptr<InnerDropdown> _container;
 	QPointer<SuggestionsWidget> _suggestions;
 

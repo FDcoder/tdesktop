@@ -1,26 +1,15 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include "boxes/abstract_box.h"
+#include "mtproto/sender.h"
+#include "core/core_cloud_password.h"
 
 namespace Ui {
 class InputField;
@@ -28,25 +17,21 @@ class PasswordInput;
 class LinkButton;
 } // namespace Ui
 
-class PasscodeBox : public BoxContent, public RPCSender {
-	Q_OBJECT
-
+class PasscodeBox : public BoxContent, private MTP::Sender {
 public:
 	PasscodeBox(QWidget*, bool turningOff);
-	PasscodeBox(QWidget*, const QByteArray &newSalt, const QByteArray &curSalt, bool hasRecovery, const QString &hint, bool turningOff = false);
+	PasscodeBox(
+		QWidget*,
+		const Core::CloudPasswordCheckRequest &curRequest,
+		const Core::CloudPasswordAlgo &newAlgo,
+		bool hasRecovery,
+		bool notEmptyPassport,
+		const QString &hint,
+		const Core::SecureSecretAlgo &newSecureSecretAlgo,
+		bool turningOff = false);
 
-private slots:
-	void onSave(bool force = false);
-	void onBadOldPasscode();
-	void onOldChanged();
-	void onNewChanged();
-	void onEmailChanged();
-	void onRecoverByEmail();
-	void onRecoverExpired();
-	void onSubmit();
-
-signals:
-	void reloadPassword();
+	rpl::producer<QByteArray> newPasswordSet() const;
+	rpl::producer<> passwordReloadNeeded() const;
 
 protected:
 	void prepare() override;
@@ -56,15 +41,67 @@ protected:
 	void resizeEvent(QResizeEvent *e) override;
 
 private:
-	void closeReplacedBy();
+	using CheckPasswordCallback = Fn<void(
+		const Core::CloudPasswordResult &check)>;
 
-	void setPasswordDone(const MTPBool &result);
-	bool setPasswordFail(const RPCError &error);
+	void submit();
+	void closeReplacedBy();
+	void oldChanged();
+	void newChanged();
+	void emailChanged();
+	void save(bool force = false);
+	void badOldPasscode();
+	void recoverByEmail();
+	void recoverExpired();
+	bool currentlyHave() const;
+
+	void setPasswordDone(const QByteArray &newPasswordBytes);
+	void setPasswordFail(const RPCError &error);
+	void setPasswordFail(
+		const QByteArray &newPasswordBytes,
+		const RPCError &error);
 
 	void recoverStarted(const MTPauth_PasswordRecovery &result);
-	bool recoverStartFail(const RPCError &error);
+	void recoverStartFail(const RPCError &error);
 
 	void recover();
+	void clearCloudPassword(const QString &oldPassword);
+	void setNewCloudPassword(const QString &newPassword);
+
+	void checkPassword(
+		const QString &oldPassword,
+		CheckPasswordCallback callback);
+	void checkPasswordHash(CheckPasswordCallback callback);
+
+	void changeCloudPassword(
+		const QString &oldPassword,
+		const QString &newPassword);
+	void changeCloudPassword(
+		const QString &oldPassword,
+		const Core::CloudPasswordResult &check,
+		const QString &newPassword);
+
+	void sendChangeCloudPassword(
+		const Core::CloudPasswordResult &check,
+		const QString &newPassword,
+		const QByteArray &secureSecret);
+	void suggestSecretReset(const QString &newPassword);
+	void resetSecret(
+		const Core::CloudPasswordResult &check,
+		const QString &newPassword,
+		Fn<void()> callback);
+	void resetSecretAndChangePassword(
+		const bytes::vector &oldPasswordHash,
+		const QString &newPassword);
+
+	void sendClearCloudPassword(const QString &oldPassword);
+	void sendClearCloudPassword(const Core::CloudPasswordResult &check);
+
+	void handleSrpIdInvalid();
+	void requestPasswordData();
+	void passwordChecked();
+	void serverError();
+
 	QString _pattern;
 
 	QPointer<BoxContent> _replacedBy;
@@ -72,9 +109,15 @@ private:
 	bool _cloudPwd = false;
 	mtpRequestId _setRequest = 0;
 
-	QByteArray _newSalt, _curSalt;
+	Core::CloudPasswordCheckRequest _curRequest;
+	TimeMs _lastSrpIdInvalidTime = 0;
+	Core::CloudPasswordAlgo _newAlgo;
+	Core::SecureSecretAlgo _newSecureSecretAlgo;
 	bool _hasRecovery = false;
+	bool _notEmptyPassport = false;
 	bool _skipEmailWarning = false;
+	CheckPasswordCallback _checkPasswordCallback;
+	bytes::vector _checkPasswordHash;
 
 	int _aboutHeight = 0;
 
@@ -89,21 +132,20 @@ private:
 
 	QString _oldError, _newError, _emailError;
 
+	rpl::event_stream<QByteArray> _newPasswordSet;
+	rpl::event_stream<> _passwordReloadNeeded;
+
 };
 
 class RecoverBox : public BoxContent, public RPCSender {
-	Q_OBJECT
-
 public:
-	RecoverBox(QWidget*, const QString &pattern);
+	RecoverBox(QWidget*, const QString &pattern, bool notEmptyPassport);
 
-public slots:
-	void onSubmit();
-	void onCodeChanged();
+	rpl::producer<> passwordCleared() const;
+	rpl::producer<> recoveryExpired() const;
 
-signals:
-	void reloadPassword();
-	void recoveryExpired();
+	//void reloadPassword();
+	//void recoveryExpired();
 
 protected:
 	void prepare() override;
@@ -113,15 +155,21 @@ protected:
 	void resizeEvent(QResizeEvent *e) override;
 
 private:
+	void submit();
+	void codeChanged();
 	void codeSubmitDone(bool recover, const MTPauth_Authorization &result);
 	bool codeSubmitFail(const RPCError &error);
 
 	mtpRequestId _submitRequest = 0;
 
 	QString _pattern;
+	bool _notEmptyPassport = false;
 
 	object_ptr<Ui::InputField> _recoverCode;
 
 	QString _error;
+
+	rpl::event_stream<> _passwordCleared;
+	rpl::event_stream<> _recoveryExpired;
 
 };

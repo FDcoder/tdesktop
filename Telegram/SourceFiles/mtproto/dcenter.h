@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -32,7 +19,7 @@ class Dcenter : public QObject {
 	Q_OBJECT
 
 public:
-	Dcenter(gsl::not_null<Instance*> instance, DcId dcId, AuthKeyPtr &&key);
+	Dcenter(not_null<Instance*> instance, DcId dcId, AuthKeyPtr &&key);
 
 	QReadWriteLock *keyMutex() const;
 	const AuthKeyPtr &getKey() const;
@@ -41,8 +28,7 @@ public:
 
 	bool connectionInited() const {
 		QMutexLocker lock(&initLock);
-		bool res = _connectionInited;
-		return res;
+		return _connectionInited;
 	}
 	void setConnectionInited(bool connectionInited = true) {
 		QMutexLocker lock(&initLock);
@@ -51,7 +37,7 @@ public:
 
 signals:
 	void authKeyCreated();
-	void layerWasInited(bool was);
+	void connectionWasInited();
 
 private slots:
 	void authKeyWrite();
@@ -59,7 +45,7 @@ private slots:
 private:
 	mutable QReadWriteLock keyLock;
 	mutable QMutex initLock;
-	gsl::not_null<Instance*> _instance;
+	not_null<Instance*> _instance;
 	DcId _id = 0;
 	AuthKeyPtr _key;
 	bool _connectionInited = false;

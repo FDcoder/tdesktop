@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/share_box.h"
 
@@ -33,12 +20,14 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "apiwrap.h"
 #include "ui/toast/toast.h"
 #include "ui/widgets/multi_select.h"
-#include "history/history_media_types.h"
-#include "history/history_message.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/scroll_area.h"
+#include "ui/text_options.h"
+#include "history/history.h"
+#include "history/history_media_types.h"
+#include "history/history_message.h"
 #include "window/themes/window_theme.h"
-#include "boxes/contacts_box.h"
+#include "boxes/peer_list_box.h"
 #include "auth_session.h"
 #include "messenger.h"
 
@@ -52,7 +41,7 @@ ShareBox::ShareBox(QWidget*, CopyCallback &&copyCallback, SubmitCallback &&submi
 
 void ShareBox::prepare() {
 	_select->resizeToWidth(st::boxWideWidth);
-	myEnsureResized(_select);
+	Ui::SendPendingMoveResizeEvents(_select);
 
 	setTitle(langFactory(lng_share_title));
 
@@ -72,7 +61,14 @@ void ShareBox::prepare() {
 		}
 	});
 	_select->setResizedCallback([this] { updateScrollSkips(); });
-	_select->setSubmittedCallback([this](bool) { _inner->onSelectActive(); });
+	_select->setSubmittedCallback([this](Qt::KeyboardModifiers modifiers) {
+		if (modifiers.testFlag(Qt::ControlModifier)
+			|| modifiers.testFlag(Qt::MetaModifier)) {
+			onSubmit();
+		} else {
+			_inner->onSelectActive();
+		}
+	});
 	connect(_inner, SIGNAL(searchByUsername()), this, SLOT(onNeedSearchByUsername()));
 	_inner->setPeerSelectedChangedCallback([this](PeerData *peer, bool checked) {
 		onPeerSelectedChanged(peer, checked);
@@ -104,7 +100,7 @@ bool ShareBox::onSearchByUsername(bool searchCache) {
 		}
 		return true;
 	}
-	if (query.size() >= MinUsernameLength) {
+	if (!query.isEmpty()) {
 		if (searchCache) {
 			auto i = _peopleCache.constFind(query);
 			if (i != _peopleCache.cend()) {
@@ -116,7 +112,12 @@ bool ShareBox::onSearchByUsername(bool searchCache) {
 		} else if (_peopleQuery != query) {
 			_peopleQuery = query;
 			_peopleFull = false;
-			_peopleRequest = MTP::send(MTPcontacts_Search(MTP_string(_peopleQuery), MTP_int(SearchPeopleLimit)), rpcDone(&ShareBox::peopleReceived), rpcFail(&ShareBox::peopleFailed));
+			_peopleRequest = MTP::send(
+				MTPcontacts_Search(
+					MTP_string(_peopleQuery),
+					MTP_int(SearchPeopleLimit)),
+				rpcDone(&ShareBox::peopleReceived),
+				rpcFail(&ShareBox::peopleFailed));
 			_peopleQueries.insert(_peopleRequest, _peopleQuery);
 		}
 	}
@@ -129,7 +130,11 @@ void ShareBox::onNeedSearchByUsername() {
 	}
 }
 
-void ShareBox::peopleReceived(const MTPcontacts_Found &result, mtpRequestId requestId) {
+void ShareBox::peopleReceived(
+		const MTPcontacts_Found &result,
+		mtpRequestId requestId) {
+	Expects(result.type() == mtpc_contacts_found);
+
 	auto query = _peopleQuery;
 
 	auto i = _peopleQueries.find(requestId);
@@ -145,7 +150,10 @@ void ShareBox::peopleReceived(const MTPcontacts_Found &result, mtpRequestId requ
 			auto &found = result.c_contacts_found();
 			App::feedUsers(found.vusers);
 			App::feedChats(found.vchats);
-			_inner->peopleReceived(query, found.vresults.v);
+			_inner->peopleReceived(
+				query,
+				found.vmy_results.v,
+				found.vresults.v);
 		} break;
 		}
 
@@ -223,7 +231,12 @@ void ShareBox::onFilterUpdate(const QString &query) {
 void ShareBox::addPeerToMultiSelect(PeerData *peer, bool skipAnimation) {
 	using AddItemWay = Ui::MultiSelect::AddItemWay;
 	auto addItemWay = skipAnimation ? AddItemWay::SkipAnimation : AddItemWay::Default;
-	_select->addItem(peer->id, peer->shortName(), st::activeButtonBg, PaintUserpicCallback(peer), addItemWay);
+	_select->addItem(
+		peer->id,
+		peer->isSelf() ? lang(lng_saved_short) : peer->shortName(),
+		st::activeButtonBg,
+		PaintUserpicCallback(peer, true),
+		addItemWay);
 }
 
 void ShareBox::onPeerSelectedChanged(PeerData *peer, bool checked) {
@@ -280,11 +293,17 @@ ShareBox::Inner::Inner(QWidget *parent, ShareBox::FilterCallback &&filterCallbac
 	_rowHeight = st::shareRowHeight;
 	setAttribute(Qt::WA_OpaquePaintEvent);
 
-	auto dialogs = App::main()->dialogsList();
-	for_const (auto row, dialogs->all()) {
-		auto history = row->history();
-		if (_filterCallback(history->peer)) {
-			_chatsIndexed->addToEnd(history);
+	const auto dialogs = App::main()->dialogsList();
+	const auto self = Auth().user();
+	if (_filterCallback(self)) {
+		_chatsIndexed->addToEnd(App::history(self));
+	}
+	for (const auto row : dialogs->all()) {
+		if (const auto history = row->history()) {
+			if (!history->peer->isSelf()
+				&& _filterCallback(history->peer)) {
+				_chatsIndexed->addToEnd(history);
+			}
 		}
 	}
 
@@ -296,7 +315,7 @@ ShareBox::Inner::Inner(QWidget *parent, ShareBox::FilterCallback &&filterCallbac
 	subscribe(Notify::PeerUpdated(), Notify::PeerUpdatedHandler(observeEvents, [this](const Notify::PeerUpdate &update) {
 		notifyPeerUpdated(update);
 	}));
-	subscribe(AuthSession::CurrentDownloaderTaskFinished(), [this] { update(); });
+	subscribe(Auth().downloaderTaskFinished(), [this] { update(); });
 
 	subscribe(Window::Theme::Background(), [this](const Window::Theme::BackgroundUpdate &update) {
 		if (update.paletteChanged()) {
@@ -311,7 +330,9 @@ void ShareBox::Inner::invalidateCache() {
 	}
 }
 
-void ShareBox::Inner::setVisibleTopBottom(int visibleTop, int visibleBottom) {
+void ShareBox::Inner::visibleTopBottomUpdated(
+		int visibleTop,
+		int visibleBottom) {
 	loadProfilePhotos(visibleTop);
 }
 
@@ -347,13 +368,15 @@ void ShareBox::Inner::activateSkipPage(int pageHeight, int direction) {
 
 void ShareBox::Inner::notifyPeerUpdated(const Notify::PeerUpdate &update) {
 	if (update.flags & Notify::PeerUpdate::Flag::NameChanged) {
-		_chatsIndexed->peerNameChanged(update.peer, update.oldNames, update.oldNameFirstChars);
+		_chatsIndexed->peerNameChanged(
+			update.peer,
+			update.oldNameFirstLetters);
 	}
 
 	updateChat(update.peer);
 }
 
-void ShareBox::Inner::updateChat(PeerData *peer) {
+void ShareBox::Inner::updateChat(not_null<PeerData*> peer) {
 	auto i = _dataMap.find(peer);
 	if (i != _dataMap.cend()) {
 		updateChatName(i.value(), peer);
@@ -361,8 +384,11 @@ void ShareBox::Inner::updateChat(PeerData *peer) {
 	}
 }
 
-void ShareBox::Inner::updateChatName(Chat *chat, PeerData *peer) {
-	chat->name.setText(st::shareNameStyle, peer->name, _textNameOptions);
+void ShareBox::Inner::updateChatName(
+		not_null<Chat*> chat,
+		not_null<PeerData*> peer) {
+	const auto text = peer->isSelf() ? lang(lng_saved_messages) : peer->name;
+	chat->name.setText(st::shareNameStyle, text, Ui::NameTextOptions());
 }
 
 void ShareBox::Inner::repaintChatAtIndex(int index) {
@@ -392,27 +418,31 @@ ShareBox::Inner::Chat *ShareBox::Inner::getChatAtIndex(int index) {
 	return nullptr;
 }
 
-void ShareBox::Inner::repaintChat(PeerData *peer) {
+void ShareBox::Inner::repaintChat(not_null<PeerData*> peer) {
 	repaintChatAtIndex(chatIndex(peer));
 }
 
-int ShareBox::Inner::chatIndex(PeerData *peer) const {
+int ShareBox::Inner::chatIndex(not_null<PeerData*> peer) const {
 	int index = 0;
 	if (_filter.isEmpty()) {
-		for_const (auto row, _chatsIndexed->all()) {
-			if (row->history()->peer == peer) {
-				return index;
+		for (const auto row : _chatsIndexed->all()) {
+			if (const auto history = row->history()) {
+				if (history->peer == peer) {
+					return index;
+				}
 			}
 			++index;
 		}
 	} else {
-		for_const (auto row, _filtered) {
-			if (row->history()->peer == peer) {
-				return index;
+		for (const auto row : _filtered) {
+			if (const auto history = row->history()) {
+				if (history->peer == peer) {
+					return index;
+				}
 			}
 			++index;
 		}
-		for_const (auto row, d_byUsernameFiltered) {
+		for (const auto row : d_byUsernameFiltered) {
 			if (row->peer == peer) {
 				return index;
 			}
@@ -437,7 +467,7 @@ void ShareBox::Inner::loadProfilePhotos(int yFrom) {
 	yFrom *= _columnCount;
 	yTo *= _columnCount;
 
-	AuthSession::Current().downloader().clearPriorities();
+	Auth().downloader().clearPriorities();
 	if (_filter.isEmpty()) {
 		if (!_chatsIndexed->isEmpty()) {
 			auto i = _chatsIndexed->cfind(yFrom, _rowHeight);
@@ -445,7 +475,7 @@ void ShareBox::Inner::loadProfilePhotos(int yFrom) {
 				if (((*i)->pos() * _rowHeight) >= yTo) {
 					break;
 				}
-				(*i)->history()->peer->loadUserpic();
+				(*i)->entry()->loadUserpic();
 			}
 		}
 	} else if (!_filtered.isEmpty()) {
@@ -456,13 +486,15 @@ void ShareBox::Inner::loadProfilePhotos(int yFrom) {
 			if (to > _filtered.size()) to = _filtered.size();
 
 			for (; from < to; ++from) {
-				_filtered[from]->history()->peer->loadUserpic();
+				_filtered[from]->entry()->loadUserpic();
 			}
 		}
 	}
 }
 
 ShareBox::Inner::Chat *ShareBox::Inner::getChat(Dialogs::Row *row) {
+	Expects(row->history() != nullptr);
+
 	auto data = static_cast<Chat*>(row->attached);
 	if (!data) {
 		auto peer = row->history()->peer;
@@ -496,7 +528,11 @@ void ShareBox::Inner::setActive(int active) {
 	emit mustScrollTo(y, y + _rowHeight);
 }
 
-void ShareBox::Inner::paintChat(Painter &p, TimeMs ms, Chat *chat, int index) {
+void ShareBox::Inner::paintChat(
+		Painter &p,
+		TimeMs ms,
+		not_null<Chat*> chat,
+		int index) {
 	auto x = _rowsLeft + qFloor((index % _columnCount) * _rowWidthReal);
 	auto y = _rowsTop + (index / _columnCount) * _rowHeight;
 
@@ -514,9 +550,9 @@ void ShareBox::Inner::paintChat(Painter &p, TimeMs ms, Chat *chat, int index) {
 	chat->name.drawLeftElided(p, x + nameLeft, y + nameTop, nameWidth, outerWidth, 2, style::al_top, 0, -1, 0, true);
 }
 
-ShareBox::Inner::Chat::Chat(PeerData *peer, base::lambda<void()> updateCallback)
+ShareBox::Inner::Chat::Chat(PeerData *peer, Fn<void()> updateCallback)
 : peer(peer)
-, checkbox(st::sharePhotoCheckbox, updateCallback, PaintUserpicCallback(peer))
+, checkbox(st::sharePhotoCheckbox, updateCallback, PaintUserpicCallback(peer, true))
 , name(st::sharePhotoCheckbox.imageRadius * 2) {
 }
 
@@ -543,15 +579,23 @@ void ShareBox::Inner::paintEvent(QPaintEvent *e) {
 				++indexFrom;
 			}
 		} else {
-			// empty
 			p.setFont(st::noContactsFont);
 			p.setPen(st::noContactsColor);
+			p.drawText(
+				rect().marginsRemoved(st::boxPadding),
+				lang(lng_bot_no_chats),
+				style::al_center);
 		}
 	} else {
-		if (_filtered.isEmpty() && _byUsernameFiltered.isEmpty()) {
-			// empty
+		if (_filtered.isEmpty()
+			&& _byUsernameFiltered.empty()
+			&& !_searching) {
 			p.setFont(st::noContactsFont);
 			p.setPen(st::noContactsColor);
+			p.drawText(
+				rect().marginsRemoved(st::boxPadding),
+				lang(lng_bot_chats_not_found),
+				style::al_center);
 		} else {
 			auto filteredSize = _filtered.size();
 			if (filteredSize) {
@@ -566,7 +610,7 @@ void ShareBox::Inner::paintEvent(QPaintEvent *e) {
 				indexFrom -= filteredSize;
 				indexTo -= filteredSize;
 			}
-			if (!_byUsernameFiltered.isEmpty()) {
+			if (!_byUsernameFiltered.empty()) {
 				if (indexFrom < 0) indexFrom = 0;
 				while (indexFrom < indexTo) {
 					if (indexFrom >= d_byUsernameFiltered.size()) {
@@ -631,40 +675,46 @@ void ShareBox::Inner::changeCheckState(Chat *chat) {
 	if (!chat) return;
 
 	if (!_filter.isEmpty()) {
-		auto row = _chatsIndexed->getRow(chat->peer->id);
+		const auto history = App::history(chat->peer);
+		auto row = _chatsIndexed->getRow(history);
 		if (!row) {
-			row = _chatsIndexed->addToEnd(App::history(chat->peer)).value(0);
+			const auto rowsByLetter = _chatsIndexed->addToEnd(history);
+			const auto it = rowsByLetter.find(0);
+			Assert(it != rowsByLetter.cend());
+			row = it->second;
 		}
 		chat = getChat(row);
 		if (!chat->checkbox.checked()) {
-			_chatsIndexed->moveToTop(chat->peer);
+			_chatsIndexed->moveToTop(history);
 		}
 	}
 
 	changePeerCheckState(chat, !chat->checkbox.checked());
 }
 
-void ShareBox::Inner::peerUnselected(PeerData *peer) {
-	// If data is nullptr we simply won't do anything.
-	auto chat = _dataMap.value(peer, nullptr);
-	changePeerCheckState(chat, false, ChangeStateWay::SkipCallback);
+void ShareBox::Inner::peerUnselected(not_null<PeerData*> peer) {
+	if (auto chat = _dataMap.value(peer, nullptr)) {
+		changePeerCheckState(chat, false, ChangeStateWay::SkipCallback);
+	}
 }
 
-void ShareBox::Inner::setPeerSelectedChangedCallback(base::lambda<void(PeerData *peer, bool selected)> callback) {
+void ShareBox::Inner::setPeerSelectedChangedCallback(Fn<void(PeerData *peer, bool selected)> callback) {
 	_peerSelectedChangedCallback = std::move(callback);
 }
 
-void ShareBox::Inner::changePeerCheckState(Chat *chat, bool checked, ChangeStateWay useCallback) {
-	if (chat) {
-		chat->checkbox.setChecked(checked);
-	}
+void ShareBox::Inner::changePeerCheckState(
+		not_null<Chat*> chat,
+		bool checked,
+		ChangeStateWay useCallback) {
+	chat->checkbox.setChecked(checked);
 	if (checked) {
 		_selected.insert(chat->peer);
 		setActive(chatIndex(chat->peer));
 	} else {
 		_selected.remove(chat->peer);
 	}
-	if (useCallback != ChangeStateWay::SkipCallback && _peerSelectedChangedCallback) {
+	if (useCallback != ChangeStateWay::SkipCallback
+		&& _peerSelectedChangedCallback) {
 		_peerSelectedChangedCallback(chat->peer, checked);
 	}
 }
@@ -709,9 +759,9 @@ void ShareBox::Inner::updateFilter(QString filter) {
 				}
 				if (toFilter) {
 					_filtered.reserve(toFilter->size());
-					for_const (auto row, *toFilter) {
-						auto &names = row->history()->peer->names;
-						PeerData::Names::const_iterator nb = names.cbegin(), ne = names.cend(), ni;
+					for (const auto row : *toFilter) {
+						auto &nameWords = row->entry()->chatsListNameWords();
+						auto nb = nameWords.cbegin(), ne = nameWords.cend(), ni = nb;
 						for (fi = fb; fi != fe; ++fi) {
 							auto filterName = *fi;
 							for (ni = nb; ni != ne; ++ni) {
@@ -740,32 +790,38 @@ void ShareBox::Inner::updateFilter(QString filter) {
 	}
 }
 
-void ShareBox::Inner::peopleReceived(const QString &query, const QVector<MTPPeer> &people) {
+void ShareBox::Inner::peopleReceived(
+		const QString &query,
+		const QVector<MTPPeer> &my,
+		const QVector<MTPPeer> &people) {
 	_lastQuery = query.toLower().trimmed();
-	if (_lastQuery.at(0) == '@') _lastQuery = _lastQuery.mid(1);
-	int32 already = _byUsernameFiltered.size();
-	_byUsernameFiltered.reserve(already + people.size());
-	d_byUsernameFiltered.reserve(already + people.size());
-	for_const (auto &mtpPeer, people) {
-		auto peerId = peerFromMTP(mtpPeer);
-		int j = 0;
-		for (; j < already; ++j) {
-			if (_byUsernameFiltered[j]->id == peerId) break;
-		}
-		if (j == already) {
-			auto *peer = App::peer(peerId);
-			if (!peer || !_filterCallback(peer)) continue;
-
-			auto chat = new Chat(peer, [this, peer] { repaintChat(peer); });
-			updateChatName(chat, peer);
-			if (auto row = _chatsIndexed->getRow(peer->id)) {
-				continue;
-			}
-
-			_byUsernameFiltered.push_back(peer);
-			d_byUsernameFiltered.push_back(chat);
-		}
+	if (_lastQuery.at(0) == '@') {
+		_lastQuery = _lastQuery.mid(1);
 	}
+	int32 already = _byUsernameFiltered.size();
+	_byUsernameFiltered.reserve(already + my.size() + people.size());
+	d_byUsernameFiltered.reserve(already + my.size() + people.size());
+	const auto feedList = [&](const QVector<MTPPeer> &list) {
+		for (const auto &mtpPeer : list) {
+			if (const auto peer = App::peerLoaded(peerFromMTP(mtpPeer))) {
+				const auto history = App::historyLoaded(peer);
+				if (!_filterCallback(peer)) {
+					continue;
+				} else if (history && _chatsIndexed->getRow(history)) {
+					continue;
+				} else if (base::contains(_byUsernameFiltered, peer)) {
+					continue;
+				}
+				auto chat = new Chat(peer, [=] { repaintChat(peer); });
+				updateChatName(chat, peer);
+				_byUsernameFiltered.push_back(peer);
+				d_byUsernameFiltered.push_back(chat);
+			}
+		}
+	};
+	feedList(my);
+	feedList(people);
+
 	_searching = false;
 	refresh();
 }
@@ -804,7 +860,7 @@ QString AppendShareGameScoreUrl(const QString &url, const FullMsgId &fullId) {
 	auto channel = fullId.channel ? App::channelLoaded(fullId.channel) : static_cast<ChannelData*>(nullptr);
 	auto channelAccessHash = channel ? channel->access : 0ULL;
 	auto channelAccessHashInts = reinterpret_cast<int32*>(&channelAccessHash);
-	shareHashDataInts[0] = AuthSession::CurrentUserId();
+	shareHashDataInts[0] = Auth().userId();
 	shareHashDataInts[1] = fullId.channel;
 	shareHashDataInts[2] = fullId.msg;
 	shareHashDataInts[3] = channelAccessHashInts[0];
@@ -871,7 +927,7 @@ void ShareGameScoreByHash(const QString &hash) {
 	}
 
 	auto hashDataInts = reinterpret_cast<int32*>(hashData.data());
-	if (!AuthSession::Exists() || hashDataInts[0] != AuthSession::CurrentUserId()) {
+	if (!AuthSession::Exists() || hashDataInts[0] != Auth().userId()) {
 		Ui::show(Box<InformBox>(lang(lng_share_wrong_user)));
 		return;
 	}
@@ -893,9 +949,9 @@ void ShareGameScoreByHash(const QString &hash) {
 
 	if (auto item = App::histItemById(channelId, msgId)) {
 		FastShareMessage(item);
-	} else if (App::api()) {
+	} else {
 		auto resolveMessageAndShareScore = [msgId](ChannelData *channel) {
-			App::api()->requestMessageData(channel, msgId, [](ChannelData *channel, MsgId msgId) {
+			Auth().api().requestMessageData(channel, msgId, [](ChannelData *channel, MsgId msgId) {
 				if (auto item = App::histItemById(channel, msgId)) {
 					FastShareMessage(item);
 				} else {

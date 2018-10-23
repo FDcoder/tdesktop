@@ -1,35 +1,24 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include <map>
 #include <set>
+#include "mtproto/rpc_sender.h"
 
 namespace MTP {
 namespace internal {
 class Dcenter;
+class Session;
+class Connection;
 } // namespace internal
 
 class DcOptions;
-class Session;
 class AuthKey;
 using AuthKeyPtr = std::shared_ptr<AuthKey>;
 using AuthKeysList = std::vector<AuthKeyPtr>;
@@ -52,41 +41,95 @@ public:
 		SpecialConfigRequester,
 		KeysDestroyer,
 	};
-	Instance(gsl::not_null<DcOptions*> options, Mode mode, Config &&config);
+	Instance(not_null<DcOptions*> options, Mode mode, Config &&config);
 
 	Instance(const Instance &other) = delete;
 	Instance &operator=(const Instance &other) = delete;
 
+	void resolveProxyDomain(const QString &host);
+	void setGoodProxyDomain(const QString &host, const QString &ip);
 	void suggestMainDcId(DcId mainDcId);
 	void setMainDcId(DcId mainDcId);
 	DcId mainDcId() const;
 	QString systemLangCode() const;
 	QString cloudLangCode() const;
+	QString langPackName() const;
 
 	void setKeyForWrite(DcId dcId, const AuthKeyPtr &key);
 	AuthKeysList getKeysForWrite() const;
 	void addKeysForDestroy(AuthKeysList &&keys);
 
-	gsl::not_null<DcOptions*> dcOptions();
+	not_null<DcOptions*> dcOptions();
 
-	template <typename TRequest>
-	mtpRequestId send(const TRequest &request, RPCResponseHandler callbacks = RPCResponseHandler(), ShiftedDcId dcId = 0, TimeMs msCanWait = 0, mtpRequestId after = 0) {
-		if (auto session = getSession(dcId)) {
-			return session->send(request, callbacks, msCanWait, true, !dcId, after);
-		}
-		return 0;
+	template <typename Request>
+	mtpRequestId send(
+			const Request &request,
+			RPCResponseHandler &&callbacks = {},
+			ShiftedDcId shiftedDcId = 0,
+			TimeMs msCanWait = 0,
+			mtpRequestId afterRequestId = 0) {
+		const auto requestId = GetNextRequestId();
+		sendSerialized(
+			requestId,
+			SecureRequest::Serialize(request),
+			std::move(callbacks),
+			shiftedDcId,
+			msCanWait,
+			afterRequestId);
+		return requestId;
 	}
 
-	template <typename TRequest>
-	mtpRequestId send(const TRequest &request, RPCDoneHandlerPtr onDone, RPCFailHandlerPtr onFail = RPCFailHandlerPtr(), int32 dc = 0, TimeMs msCanWait = 0, mtpRequestId after = 0) {
-		return send(request, RPCResponseHandler(onDone, onFail), dc, msCanWait, after);
+	template <typename Request>
+	mtpRequestId send(
+			const Request &request,
+			RPCDoneHandlerPtr &&onDone,
+			RPCFailHandlerPtr &&onFail = nullptr,
+			ShiftedDcId shiftedDcId = 0,
+			TimeMs msCanWait = 0,
+			mtpRequestId afterRequestId = 0) {
+		return send(
+			request,
+			RPCResponseHandler(std::move(onDone), std::move(onFail)),
+			shiftedDcId,
+			msCanWait,
+			afterRequestId);
 	}
 
-	void sendAnything(ShiftedDcId dcId = 0, TimeMs msCanWait = 0) {
-		if (auto session = getSession(dcId)) {
-			session->sendAnything(msCanWait);
-		}
+	template <typename Request>
+	mtpRequestId sendProtocolMessage(
+			ShiftedDcId shiftedDcId,
+			const Request &request) {
+		const auto requestId = GetNextRequestId();
+		sendRequest(
+			requestId,
+			SecureRequest::Serialize(request),
+			{},
+			shiftedDcId,
+			0,
+			false,
+			0);
+		return requestId;
 	}
+
+	void sendSerialized(
+			mtpRequestId requestId,
+			SecureRequest &&request,
+			RPCResponseHandler &&callbacks,
+			ShiftedDcId shiftedDcId,
+			TimeMs msCanWait,
+			mtpRequestId afterRequestId) {
+		const auto needsLayer = true;
+		sendRequest(
+			requestId,
+			std::move(request),
+			std::move(callbacks),
+			shiftedDcId,
+			msCanWait,
+			needsLayer,
+			afterRequestId);
+	}
+
+	void sendAnything(ShiftedDcId shiftedDcId = 0, TimeMs msCanWait = 0);
 
 	void restart();
 	void restart(ShiftedDcId shiftedDcId);
@@ -103,21 +146,18 @@ public:
 	std::shared_ptr<internal::Dcenter> getDcById(ShiftedDcId shiftedDcId);
 	void unpaused();
 
-	void queueQuittingConnection(std::unique_ptr<internal::Connection> connection);
+	void queueQuittingConnection(std::unique_ptr<internal::Connection> &&connection);
 
 	void setUpdatesHandler(RPCDoneHandlerPtr onDone);
 	void setGlobalFailHandler(RPCFailHandlerPtr onFail);
-	void setStateChangedHandler(base::lambda<void(ShiftedDcId shiftedDcId, int32 state)> handler);
-	void setSessionResetHandler(base::lambda<void(ShiftedDcId shiftedDcId)> handler);
+	void setStateChangedHandler(Fn<void(ShiftedDcId shiftedDcId, int32 state)> handler);
+	void setSessionResetHandler(Fn<void(ShiftedDcId shiftedDcId)> handler);
 	void clearGlobalHandlers();
 
-	void onStateChange(ShiftedDcId dcWithShift, int32 state);
-	void onSessionReset(ShiftedDcId dcWithShift);
+	void onStateChange(ShiftedDcId shiftedDcId, int32 state);
+	void onSessionReset(ShiftedDcId shiftedDcId);
 
-	void registerRequest(mtpRequestId requestId, ShiftedDcId dcWithShift);
-	mtpRequestId storeRequest(mtpRequest &request, const RPCResponseHandler &parser);
-	mtpRequest getRequest(mtpRequestId requestId);
-	void clearCallbacksDelayed(const RPCCallbackClears &requestIds);
+	void clearCallbacksDelayed(std::vector<RPCCallbackClear> &&ids);
 
 	void execCallback(mtpRequestId requestId, const mtpPrime *from, const mtpPrime *end);
 	bool hasCallbacks(mtpRequestId requestId);
@@ -130,7 +170,10 @@ public:
 	void scheduleKeyDestroy(ShiftedDcId shiftedDcId);
 
 	void requestConfig();
+	void requestConfigIfOld();
 	void requestCDNConfig();
+	void setUserPhone(const QString &phone);
+	void badConfigurationError();
 
 	~Instance();
 
@@ -142,12 +185,23 @@ signals:
 	void cdnConfigLoaded();
 	void keyDestroyed(qint32 shiftedDcId);
 	void allKeysDestroyed();
+	void proxyDomainResolved(
+		QString host,
+		QStringList ips,
+		qint64 expireAt);
 
 private slots:
 	void onKeyDestroyed(qint32 shiftedDcId);
 
 private:
-	internal::Session *getSession(ShiftedDcId shiftedDcId);
+	void sendRequest(
+		mtpRequestId requestId,
+		SecureRequest &&request,
+		RPCResponseHandler &&callbacks,
+		ShiftedDcId shiftedDcId,
+		TimeMs msCanWait,
+		bool needsLayer,
+		mtpRequestId afterRequestId);
 
 	class Private;
 	const std::unique_ptr<Private> _private;

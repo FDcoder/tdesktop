@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -26,7 +13,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 namespace Ui {
 class IconButton;
 class RoundButton;
-class InputArea;
+class InputField;
 } // namespace Ui
 
 namespace Window {
@@ -95,16 +82,10 @@ private:
 	SingleTimer _inputCheckTimer;
 
 	struct QueuedNotification {
-		QueuedNotification(HistoryItem *item, int forwardedCount)
-		: history(item->history())
-		, peer(history->peer)
-		, author((item->hasFromName() && !item->isPost()) ? item->author() : nullptr)
-		, item((forwardedCount > 1) ? nullptr : item)
-		, forwardedCount(forwardedCount) {
-		}
+		QueuedNotification(not_null<HistoryItem*> item, int forwardedCount);
 
-		History *history;
-		PeerData *peer;
+		not_null<History*> history;
+		not_null<PeerData*> peer;
 		PeerData *author;
 		HistoryItem *item;
 		int forwardedCount;
@@ -164,6 +145,7 @@ private:
 
 	bool _hiding = false;
 	bool _deleted = false;
+	base::binary_guard _hidingDelayed;
 	Animation _a_opacity;
 
 	QPoint _startPosition;
@@ -183,8 +165,6 @@ protected:
 };
 
 class Notification : public Widget {
-	Q_OBJECT
-
 public:
 	Notification(Manager *manager, History *history, PeerData *peer, PeerData *author, HistoryItem *item, int forwardedCount, QPoint startPosition, int shift, Direction shiftDirection);
 
@@ -213,16 +193,12 @@ protected:
 	void mousePressEvent(QMouseEvent *e) override;
 	bool eventFilter(QObject *o, QEvent *e) override;
 
-private slots:
-	void onHideByTimer();
-	void onReplyResize();
-	void onReplySubmit(bool ctrlShiftEnter);
-	void onReplyCancel();
-
 private:
 	void refreshLang();
 	void updateReplyGeometry();
 	bool canReply() const;
+	void replyResized();
+	void replyCancel();
 
 	void unlinkHistoryInManager();
 	void toggleActionButtons(bool visible);
@@ -252,7 +228,7 @@ private:
 	object_ptr<Ui::IconButton> _close;
 	object_ptr<Ui::RoundButton> _reply;
 	object_ptr<Background> _background = { nullptr };
-	object_ptr<Ui::InputArea> _replyArea = { nullptr };
+	object_ptr<Ui::InputField> _replyArea = { nullptr };
 	object_ptr<Ui::IconButton> _replySend = { nullptr };
 	bool _waitingForInput = true;
 

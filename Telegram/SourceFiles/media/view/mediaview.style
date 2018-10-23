@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 
 using "basic.style";
@@ -56,7 +43,7 @@ mediaviewPauseIcon: icon {{ "media_pause", mediaviewPlaybackIconFg, point(1px, 1
 mediaviewPauseIconOver: icon {{ "media_pause", mediaviewPlaybackIconFgOver, point(1px, 1px) }};
 mediaviewPlayPauseLeft: 17px;
 mediaviewFullScreenLeft: 17px;
-mediaviewVolumeLeft: 15px;
+mediaviewVolumeLeft: 7px;
 
 mediaviewFullScreenButton: IconButton(mediaviewPlayButton) {
 	icon: icon {{ "media_fullscreen_to", mediaviewPlaybackIconFg, point(0px, 0px) }};
@@ -68,11 +55,7 @@ mediaviewFullScreenOutIconOver: icon {{ "media_fullscreen_from", mediaviewPlayba
 
 mediaviewPlaybackTop: 28px;
 
-mediaviewVolumeSize: size(44px, 20px);
-mediaviewVolumeIcon: icon {{ "media_volume", mediaviewPlaybackInactiveOver, point(0px, 0px) }};
-mediaviewVolumeOnIcon: icon {{ "media_volume", mediaviewPlaybackActive, point(0px, 0px) }};
-mediaviewVolumeOnIconOver: icon {{ "media_volume", mediaviewPlaybackActiveOver, point(0px, 0px) }};
-mediaviewVolumeIconTop: 8px;
+mediaviewVolumeWidth: 60px;
 mediaviewControllerRadius: 25px;
 
 mediaviewLeft: icon {{ "mediaview_next-flip_horizontal", mediaviewControlFg }};
@@ -162,6 +145,7 @@ mediaviewSaveMsgStyle: TextStyle(defaultTextStyle) {
 }
 mediaviewTextPalette: TextPalette(defaultTextPalette) {
 	linkFg: mediaviewTextLinkFg;
+	monoFg: mediaviewCaptionFg;
 }
 
 mediaviewCaptionStyle: defaultTextStyle;
@@ -195,6 +179,13 @@ mediaviewSwipeDistance: 80px;
 mediaviewCaptionPadding: margins(18px, 10px, 18px, 10px);
 mediaviewCaptionMargin: size(11px, 11px);
 mediaviewCaptionRadius: 2px;
+
+mediaviewGroupPadding: margins(0px, 14px, 0px, 14px);
+mediaviewGroupHeight: 80px;
+mediaviewGroupWidth: 56px;
+mediaviewGroupWidthMax: 160px;
+mediaviewGroupSkip: 3px;
+mediaviewGroupSkipCurrent: 12px;
 
 themePreviewSize: size(903px, 584px);
 themePreviewBg: windowBg;

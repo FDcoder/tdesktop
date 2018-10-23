@@ -1,19 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/mac/specific_mac_p.h"
 
@@ -27,6 +17,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "styles/style_window.h"
 #include "lang/lang_keys.h"
 #include "base/timer.h"
+#include "core/crash_reports.h"
 
 #include <Cocoa/Cocoa.h>
 #include <CoreFoundation/CFURL.h>
@@ -37,6 +28,8 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 namespace {
 
 constexpr auto kIgnoreActivationTimeoutMs = 500;
+
+std::optional<bool> ApplicationIsActive;
 
 } // namespace
 
@@ -94,6 +87,7 @@ using Platform::NS2QString;
 - (BOOL) applicationShouldHandleReopen:(NSApplication *)theApplication hasVisibleWindows:(BOOL)flag;
 - (void) applicationDidFinishLaunching:(NSNotification *)aNotification;
 - (void) applicationDidBecomeActive:(NSNotification *)aNotification;
+- (void) applicationDidResignActive:(NSNotification *)aNotification;
 - (void) receiveWakeNote:(NSNotification*)note;
 
 - (void) setWatchingMediaKeys:(bool)watching;
@@ -127,7 +121,16 @@ ApplicationDelegate *_sharedDelegate = nil;
 	});
 #ifndef OS_MAC_STORE
 	if ([SPMediaKeyTap usesGlobalMediaKeyTap]) {
-		_keyTap = [[SPMediaKeyTap alloc] initWithDelegate:self];
+#ifndef OS_MAC_OLD
+		if (QSysInfo::macVersion() < Q_MV_OSX(10, 14)) {
+#else // OS_MAC_OLD
+		if (true) {
+#endif // OS_MAC_OLD
+			_keyTap = [[SPMediaKeyTap alloc] initWithDelegate:self];
+		} else {
+			// In macOS Mojave it requires accessibility features.
+			LOG(("Media key monitoring disabled in Mojave."));
+		}
 	} else {
 		LOG(("Media key monitoring disabled"));
 	}
@@ -135,6 +138,7 @@ ApplicationDelegate *_sharedDelegate = nil;
 }
 
 - (void) applicationDidBecomeActive:(NSNotification *)aNotification {
+	ApplicationIsActive = true;
 	if (auto messenger = Messenger::InstancePointer()) {
 		if (!_ignoreActivation) {
 			messenger->handleAppActivated();
@@ -145,6 +149,10 @@ ApplicationDelegate *_sharedDelegate = nil;
 			}
 		}
 	}
+}
+
+- (void) applicationDidResignActive:(NSNotification *)aNotification {
+	ApplicationIsActive = false;
 }
 
 - (void) receiveWakeNote:(NSNotification*)aNotification {
@@ -196,6 +204,12 @@ void SetWatchingMediaKeys(bool watching) {
 	}
 }
 
+bool IsApplicationActive() {
+	return ApplicationIsActive
+		? *ApplicationIsActive
+		: (static_cast<QApplication*>(QApplication::instance())->activeWindow() != nullptr);
+}
+
 void InitOnTopPanel(QWidget *panel) {
 	Expects(!panel->windowHandle());
 
@@ -207,7 +221,7 @@ void InitOnTopPanel(QWidget *panel) {
 	panel->createWinId();
 
 	auto platformWindow = [reinterpret_cast<NSView*>(panel->winId()) window];
-	t_assert([platformWindow isKindOfClass:[NSPanel class]]);
+	Assert([platformWindow isKindOfClass:[NSPanel class]]);
 
 	auto platformPanel = static_cast<NSPanel*>(platformWindow);
 	[platformPanel setLevel:NSPopUpMenuWindowLevel];
@@ -220,7 +234,7 @@ void InitOnTopPanel(QWidget *panel) {
 
 void DeInitOnTopPanel(QWidget *panel) {
 	auto platformWindow = [reinterpret_cast<NSView*>(panel->winId()) window];
-	t_assert([platformWindow isKindOfClass:[NSPanel class]]);
+	Assert([platformWindow isKindOfClass:[NSPanel class]]);
 
 	auto platformPanel = static_cast<NSPanel*>(platformWindow);
 	auto newBehavior = ([platformPanel collectionBehavior] & (~NSWindowCollectionBehaviorCanJoinAllSpaces)) | NSWindowCollectionBehaviorMoveToActiveSpace;
@@ -229,7 +243,7 @@ void DeInitOnTopPanel(QWidget *panel) {
 
 void ReInitOnTopPanel(QWidget *panel) {
 	auto platformWindow = [reinterpret_cast<NSView*>(panel->winId()) window];
-	t_assert([platformWindow isKindOfClass:[NSPanel class]]);
+	Assert([platformWindow isKindOfClass:[NSPanel class]]);
 
 	auto platformPanel = static_cast<NSPanel*>(platformWindow);
 	auto newBehavior = ([platformPanel collectionBehavior] & (~NSWindowCollectionBehaviorMoveToActiveSpace)) | NSWindowCollectionBehaviorCanJoinAllSpaces;
@@ -401,78 +415,6 @@ void objc_finish() {
 		[_downloadPathUrl stopAccessingSecurityScopedResource];
 		_downloadPathUrl = nil;
 	}
-}
-
-void objc_registerCustomScheme() {
-#ifndef TDESKTOP_DISABLE_REGISTER_CUSTOM_SCHEME
-	OSStatus result = LSSetDefaultHandlerForURLScheme(CFSTR("tg"), (CFStringRef)[[NSBundle mainBundle] bundleIdentifier]);
-	DEBUG_LOG(("App Info: set default handler for 'tg' scheme result: %1").arg(result));
-#endif // !TDESKTOP_DISABLE_REGISTER_CUSTOM_SCHEME
-}
-
-BOOL _execUpdater(BOOL update = YES, const QString &crashreport = QString()) {
-	@autoreleasepool {
-
-	NSString *path = @"", *args = @"";
-	@try {
-		path = [[NSBundle mainBundle] bundlePath];
-		if (!path) {
-			LOG(("Could not get bundle path!!"));
-			return NO;
-		}
-		path = [path stringByAppendingString:@"/Contents/Frameworks/Updater"];
-
-		NSMutableArray *args = [[NSMutableArray alloc] initWithObjects:@"-workpath", Q2NSString(cWorkingDir()), @"-procid", nil];
-		[args addObject:[NSString stringWithFormat:@"%d", [[NSProcessInfo processInfo] processIdentifier]]];
-		if (cRestartingToSettings()) [args addObject:@"-tosettings"];
-		if (!update) [args addObject:@"-noupdate"];
-		if (cLaunchMode() == LaunchModeAutoStart) [args addObject:@"-autostart"];
-		if (cDebug()) [args addObject:@"-debug"];
-		if (cStartInTray()) [args addObject:@"-startintray"];
-		if (cTestMode()) [args addObject:@"-testmode"];
-		if (cDataFile() != qsl("data")) {
-			[args addObject:@"-key"];
-			[args addObject:Q2NSString(cDataFile())];
-		}
-		if (!crashreport.isEmpty()) {
-			[args addObject:@"-crashreport"];
-			[args addObject:Q2NSString(crashreport)];
-		}
-
-		DEBUG_LOG(("Application Info: executing %1 %2").arg(NS2QString(path)).arg(NS2QString([args componentsJoinedByString:@" "])));
-		Logs::closeMain();
-		SignalHandlers::finish();
-		if (![NSTask launchedTaskWithLaunchPath:path arguments:args]) {
-			DEBUG_LOG(("Task not launched while executing %1 %2").arg(NS2QString(path)).arg(NS2QString([args componentsJoinedByString:@" "])));
-			return NO;
-		}
-	}
-	@catch (NSException *exception) {
-		LOG(("Exception caught while executing %1 %2").arg(NS2QString(path)).arg(NS2QString(args)));
-		return NO;
-	}
-	@finally {
-	}
-
-	}
-	return YES;
-}
-
-bool objc_execUpdater() {
-	return !!_execUpdater();
-}
-
-void objc_execTelegram(const QString &crashreport) {
-#ifndef OS_MAC_STORE
-	_execUpdater(NO, crashreport);
-#else // OS_MAC_STORE
-	@autoreleasepool {
-
-	NSDictionary *conf = [NSDictionary dictionaryWithObject:[NSArray array] forKey:NSWorkspaceLaunchConfigurationArguments];
-	[[NSWorkspace sharedWorkspace] launchApplicationAtURL:[NSURL fileURLWithPath:Q2NSString(cExeDir() + cExeName())] options:NSWorkspaceLaunchAsync | NSWorkspaceLaunchNewInstance configuration:conf error:0];
-
-	}
-#endif // OS_MAC_STORE
 }
 
 void objc_activateProgram(WId winId) {

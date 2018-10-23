@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/win/specific_win.h"
 
@@ -30,8 +17,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "mainwidget.h"
 #include "history/history_location_manager.h"
 #include "storage/localstorage.h"
-#include "passcodewidget.h"
-#include "base/task_queue.h"
+#include "core/crash_reports.h"
 
 #include <Shobjidl.h>
 #include <shellapi.h>
@@ -211,34 +197,6 @@ QString psDownloadPath() {
 	return QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + '/' + str_const_toString(AppName) + '/';
 }
 
-QString psCurrentExeDirectory(int argc, char *argv[]) {
-	LPWSTR *args;
-	int argsCount;
-	args = CommandLineToArgvW(GetCommandLine(), &argsCount);
-	if (args) {
-		QFileInfo info(QDir::fromNativeSeparators(QString::fromWCharArray(args[0])));
-		if (info.isFile()) {
-			return info.absoluteDir().absolutePath() + '/';
-		}
-		LocalFree(args);
-	}
-	return QString();
-}
-
-QString psCurrentExeName(int argc, char *argv[]) {
-	LPWSTR *args;
-	int argsCount;
-	args = CommandLineToArgvW(GetCommandLine(), &argsCount);
-	if (args) {
-		QFileInfo info(QDir::fromNativeSeparators(QString::fromWCharArray(args[0])));
-		if (info.isFile()) {
-			return info.fileName();
-		}
-		LocalFree(args);
-	}
-	return QString();
-}
-
 void psDoCleanup() {
 	try {
 		psAutoStart(false, true);
@@ -370,6 +328,28 @@ QString SystemCountry() {
 		if (len) {
 			return QString::fromStdWString(std::wstring(wstrCountry));
 		}
+	}
+	return QString();
+}
+
+bool IsApplicationActive() {
+	return static_cast<QApplication*>(QApplication::instance())->activeWindow() != nullptr;
+}
+
+QString CurrentExecutablePath(int argc, char *argv[]) {
+	WCHAR result[MAX_PATH + 1] = { 0 };
+	auto count = GetModuleFileName(nullptr, result, MAX_PATH + 1);
+	if (count < MAX_PATH + 1) {
+		auto info = QFileInfo(QDir::fromNativeSeparators(QString::fromWCharArray(result)));
+		return info.absoluteFilePath();
+	}
+
+	// Fallback to the first command line argument.
+	auto argsCount = 0;
+	if (auto args = CommandLineToArgvW(GetCommandLine(), &argsCount)) {
+		auto info = QFileInfo(QDir::fromNativeSeparators(QString::fromWCharArray(args[0])));
+		LocalFree(args);
+		return info.absoluteFilePath();
 	}
 	return QString();
 }
@@ -542,15 +522,23 @@ QString SystemLanguage() {
 
 namespace {
 	void _psLogError(const char *str, LSTATUS code) {
-		LPTSTR errorText = NULL, errorTextDefault = L"(Unknown error)";
-		FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPTSTR)&errorText, 0, 0);
-		if (!errorText) {
-			errorText = errorTextDefault;
-		}
+		LPWSTR errorTextFormatted = nullptr;
+		auto formatFlags = FORMAT_MESSAGE_FROM_SYSTEM
+			| FORMAT_MESSAGE_ALLOCATE_BUFFER
+			| FORMAT_MESSAGE_IGNORE_INSERTS;
+		FormatMessage(
+			formatFlags,
+			NULL,
+			code,
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			(LPTSTR)&errorTextFormatted,
+			0,
+			0);
+		auto errorText = errorTextFormatted
+			? errorTextFormatted
+			: L"(Unknown error)";
 		LOG((str).arg(code).arg(QString::fromStdWString(errorText)));
-		if (errorText != errorTextDefault) {
-			LocalFree(errorText);
-		}
+		LocalFree(errorTextFormatted);
 	}
 
 	bool _psOpenRegKey(LPCWSTR key, PHKEY rkey) {
@@ -591,7 +579,12 @@ namespace {
 	}
 }
 
+namespace Platform {
+
 void RegisterCustomScheme() {
+	if (cExeName().isEmpty()) {
+		return;
+	}
 #ifndef TDESKTOP_DISABLE_REGISTER_CUSTOM_SCHEME
 	DEBUG_LOG(("App Info: Checking custom scheme 'tg'..."));
 
@@ -633,8 +626,41 @@ void RegisterCustomScheme() {
 #endif // !TDESKTOP_DISABLE_REGISTER_CUSTOM_SCHEME
 }
 
+PermissionStatus GetPermissionStatus(PermissionType type) {
+	if (type==PermissionType::Microphone) {
+		PermissionStatus result=PermissionStatus::Granted;
+		HKEY hKey;
+		LSTATUS res=RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone", 0, KEY_QUERY_VALUE, &hKey);
+		if(res==ERROR_SUCCESS) {
+			wchar_t buf[20];
+			DWORD length=sizeof(buf);
+			res=RegQueryValueEx(hKey, L"Value", NULL, NULL, (LPBYTE)buf, &length);
+			if(res==ERROR_SUCCESS) {
+				if(wcscmp(buf, L"Deny")==0) {
+					result=PermissionStatus::Denied;
+				}
+			}
+			RegCloseKey(hKey);
+		}
+		return result;
+	}
+	return PermissionStatus::Granted;
+}
+
+void RequestPermission(PermissionType type, Fn<void(PermissionStatus)> resultCallback) {
+	resultCallback(PermissionStatus::Granted);
+}
+
+void OpenSystemSettingsForPermission(PermissionType type) {
+	if (type==PermissionType::Microphone) {
+		ShellExecute(NULL, L"open", L"ms-settings:privacy-microphone", NULL, NULL, SW_SHOWDEFAULT);
+	}
+}
+
+} // namespace Platform
+
 void psNewVersion() {
-	RegisterCustomScheme();
+	Platform::RegisterCustomScheme();
 	if (Local::oldSettingsVersion() < 8051) {
 		AppUserModelId::checkPinned();
 	}
@@ -646,47 +672,10 @@ void psNewVersion() {
 	}
 }
 
-void psExecUpdater() {
-	QString targs = qsl("-update -exename \"") + cExeName() + '"';
-	if (cLaunchMode() == LaunchModeAutoStart) targs += qsl(" -autostart");
-	if (cDebug()) targs += qsl(" -debug");
-	if (cStartInTray()) targs += qsl(" -startintray");
-	if (cWriteProtected()) targs += qsl(" -writeprotected \"") + cExeDir() + '"';
-
-	QString updaterPath = cWriteProtected() ? (cWorkingDir() + qsl("tupdates/temp/Updater.exe")) : (cExeDir() + qsl("Updater.exe"));
-
-	QString updater(QDir::toNativeSeparators(updaterPath)), wdir(QDir::toNativeSeparators(cWorkingDir()));
-
-	DEBUG_LOG(("Application Info: executing %1 %2").arg(cExeDir() + "Updater.exe").arg(targs));
-	HINSTANCE r = ShellExecute(0, cWriteProtected() ? L"runas" : 0, updater.toStdWString().c_str(), targs.toStdWString().c_str(), wdir.isEmpty() ? 0 : wdir.toStdWString().c_str(), SW_SHOWNORMAL);
-	if (long(r) < 32) {
-		DEBUG_LOG(("Application Error: failed to execute %1, working directory: '%2', result: %3").arg(updater).arg(wdir).arg(long(r)));
-		psDeleteDir(cWorkingDir() + qsl("tupdates/temp"));
-	}
-}
-
-void psExecTelegram(const QString &crashreport) {
-	QString targs = crashreport.isEmpty() ? qsl("-noupdate") : ('"' + crashreport + '"');
-	if (crashreport.isEmpty()) {
-		if (cRestartingToSettings()) targs += qsl(" -tosettings");
-		if (cLaunchMode() == LaunchModeAutoStart) targs += qsl(" -autostart");
-		if (cDebug()) targs += qsl(" -debug");
-		if (cStartInTray()) targs += qsl(" -startintray");
-		if (cTestMode()) targs += qsl(" -testmode");
-		if (cDataFile() != qsl("data")) targs += qsl(" -key \"") + cDataFile() + '"';
-	}
-	QString telegram(QDir::toNativeSeparators(cExeDir() + cExeName())), wdir(QDir::toNativeSeparators(cWorkingDir()));
-
-	DEBUG_LOG(("Application Info: executing %1 %2").arg(cExeDir() + cExeName()).arg(targs));
-	Logs::closeMain();
-	SignalHandlers::finish();
-	HINSTANCE r = ShellExecute(0, 0, telegram.toStdWString().c_str(), targs.toStdWString().c_str(), wdir.isEmpty() ? 0 : wdir.toStdWString().c_str(), SW_SHOWNORMAL);
-	if (long(r) < 32) {
-		DEBUG_LOG(("Application Error: failed to execute %1, working directory: '%2', result: %3").arg(telegram).arg(wdir).arg(long(r)));
-	}
-}
-
 void _manageAppLnk(bool create, bool silent, int path_csidl, const wchar_t *args, const wchar_t *description) {
+	if (cExeName().isEmpty()) {
+		return;
+	}
 	WCHAR startupFolder[MAX_PATH];
 	HRESULT hr = SHGetFolderPath(0, path_csidl, 0, SHGFP_TYPE_CURRENT, startupFolder);
 	if (SUCCEEDED(hr)) {
@@ -1111,176 +1100,10 @@ BOOL _getModuleInfo(HANDLE hProcess, DWORD64 baseAddr, IMAGEHLP_MODULEW64 *pModu
 void psWriteDump() {
 }
 
-char ImageHlpSymbol64[sizeof(IMAGEHLP_SYMBOL64) + StackEntryMaxNameLength];
-QString psPrepareCrashDump(const QByteArray &crashdump, QString dumpfile) {
-	if (!LoadDbgHelp(true)) {
-		return qsl("ERROR: could not init dbghelp.dll!");
-	}
-
-	HANDLE hProcess = GetCurrentProcess();
-
-	QString initial = QString::fromUtf8(crashdump), result;
-	QStringList lines = initial.split('\n');
-	result.reserve(initial.size());
-	int32 i = 0, l = lines.size();
-	QString versionstr;
-	uint64 version = 0, betaversion = 0;
-	for (;  i < l; ++i) {
-		result.append(lines.at(i)).append('\n');
-		QString line = lines.at(i).trimmed();
-		if (line.startsWith(qstr("Version: "))) {
-			versionstr = line.mid(qstr("Version: ").size()).trimmed();
-			version = versionstr.toULongLong();
-			if (versionstr.endsWith(qstr("beta"))) {
-				if (version % 1000) {
-					betaversion = version;
-				} else {
-					version /= 1000;
-				}
-			}
-			++i;
-			break;
-		}
-	}
-
-	// maybe need to launch another executable
-	QString tolaunch;
-	if ((betaversion && betaversion != cBetaVersion()) || (!betaversion && version && version != AppVersion)) {
-		QString path = cExeDir();
-		QRegularExpressionMatch m = QRegularExpression("deploy/\\d+\\.\\d+/\\d+\\.\\d+\\.\\d+(/|\\.dev/|\\.alpha/|_\\d+/)(Telegram/)?$").match(path);
-		if (m.hasMatch()) {
-			QString base = path.mid(0, m.capturedStart()) + qstr("deploy/");
-			int32 major = version / 1000000, minor = (version % 1000000) / 1000, micro = (version % 1000);
-			base += qsl("%1.%2/%3.%4.%5").arg(major).arg(minor).arg(major).arg(minor).arg(micro);
-			if (betaversion) {
-				base += qsl("_%1").arg(betaversion);
-			} else if (QDir(base + qstr(".dev")).exists()) {
-				base += qstr(".dev");
-			} else if (QDir(base + qstr(".alpha")).exists()) {
-				base += qstr(".alpha");
-			}
-			if (QFile(base + qstr("/Telegram/Telegram.exe")).exists()) {
-				base += qstr("/Telegram");
-			}
-			tolaunch = base + qstr("Telegram.exe");
-		}
-	}
-	if (!tolaunch.isEmpty()) {
-		result.append(qsl("ERROR: for this crashdump executable '%1' should be used!").arg(tolaunch));
-	}
-
-	while (i < l) {
-		for (; i < l; ++i) {
-			result.append(lines.at(i)).append('\n');
-			QString line = lines.at(i).trimmed();
-			if (line == qstr("Backtrace:")) {
-				++i;
-				break;
-			}
-		}
-
-		IMAGEHLP_SYMBOL64 *pSym = NULL;
-		IMAGEHLP_MODULEW64 Module;
-		IMAGEHLP_LINEW64 Line;
-
-		pSym = (IMAGEHLP_SYMBOL64*)ImageHlpSymbol64;
-		memset(pSym, 0, sizeof(IMAGEHLP_SYMBOL64) + StackEntryMaxNameLength);
-		pSym->SizeOfStruct = sizeof(IMAGEHLP_SYMBOL64);
-		pSym->MaxNameLength = StackEntryMaxNameLength;
-
-		memset(&Line, 0, sizeof(Line));
-		Line.SizeOfStruct = sizeof(Line);
-
-		memset(&Module, 0, sizeof(Module));
-		Module.SizeOfStruct = sizeof(Module);
-
-		StackEntry csEntry;
-		for (int32 start = i; i < l; ++i) {
-			QString line = lines.at(i).trimmed();
-			if (line.isEmpty()) break;
-
-			result.append(qsl("%1. ").arg(i + 1 - start));
-			if (!QRegularExpression(qsl("^\\d+$")).match(line).hasMatch()) {
-				if (!lines.at(i).startsWith(qstr("ERROR: "))) {
-					result.append(qstr("BAD LINE: "));
-				}
-				result.append(line).append('\n');
-				continue;
-			}
-
-			DWORD64 address = line.toULongLong();
-
-			csEntry.offset = address;
-			csEntry.name[0] = 0;
-			csEntry.undName[0] = 0;
-			csEntry.undFullName[0] = 0;
-			csEntry.offsetFromSmybol = 0;
-			csEntry.offsetFromLine = 0;
-			csEntry.lineFileName[0] = 0;
-			csEntry.lineNumber = 0;
-			csEntry.loadedImageName[0] = 0;
-			csEntry.moduleName[0] = 0;
-
-			if (symGetSymFromAddr64(hProcess, address, &(csEntry.offsetFromSmybol), pSym) != FALSE) {
-				// TODO: Mache dies sicher...!
-				strcpy_s(csEntry.name, pSym->Name);
-
-				unDecorateSymbolName(pSym->Name, csEntry.undName, StackEntryMaxNameLength, UNDNAME_NAME_ONLY);
-				unDecorateSymbolName(pSym->Name, csEntry.undFullName, StackEntryMaxNameLength, UNDNAME_COMPLETE);
-
-				if (symGetLineFromAddr64) {
-					if (symGetLineFromAddr64(hProcess, address, &(csEntry.offsetFromLine), &Line) != FALSE) {
-						csEntry.lineNumber = Line.LineNumber;
-
-						// TODO: Mache dies sicher...!
-						wcscpy_s(csEntry.lineFileName, Line.FileName);
-					}
-				}
-			} else {
-				result.append("ERROR: could not get Sym from Addr! for ").append(QString::number(address)).append('\n');
-				continue;
-			}
-
-			if (_getModuleInfo(hProcess, address, &Module) != FALSE) {
-				// TODO: Mache dies sicher...!
-				wcscpy_s(csEntry.moduleName, Module.ModuleName);
-			}
-			if (csEntry.name[0] == 0) {
-				strcpy_s(csEntry.name, "(function-name not available)");
-			}
-			if (csEntry.undName[0] != 0) {
-				strcpy_s(csEntry.name, csEntry.undName);
-			}
-			if (csEntry.undFullName[0] != 0) {
-				strcpy_s(csEntry.name, csEntry.undFullName);
-			}
-			if (csEntry.lineFileName[0] == 0) {
-				if (csEntry.moduleName[0] == 0) {
-					wcscpy_s(csEntry.moduleName, L"module-name not available");
-				}
-				result.append(csEntry.name).append(qsl(" (%1) 0x%3").arg(QString::fromWCharArray(csEntry.moduleName)).arg(address, 0, 16)).append('\n');
-			} else {
-				QString file = QString::fromWCharArray(csEntry.lineFileName).toLower();
-				int32 index = file.indexOf(qstr("tbuild\\tdesktop\\telegram\\"));
-				if (index >= 0) {
-					file = file.mid(index + qstr("tbuild\\tdesktop\\telegram\\").size());
-					if (file.startsWith(qstr("sourcefiles\\"))) {
-						file = file.mid(qstr("sourcefiles\\").size());
-					}
-				}
-				result.append(csEntry.name).append(qsl(" (%1 - %2) 0x%3").arg(file).arg(csEntry.lineNumber).arg(address, 0, 16)).append('\n');
-			}
-		}
-	}
-
-	symCleanup(hProcess);
-	return result;
-}
-
 void psWriteStackTrace() {
 #ifndef TDESKTOP_DISABLE_CRASH_REPORTS
 	if (!LoadDbgHelp()) {
-		SignalHandlers::dump() << "ERROR: Could not load dbghelp.dll!\n";
+		CrashReports::dump() << "ERROR: Could not load dbghelp.dll!\n";
 		return;
 	}
 
@@ -1337,17 +1160,17 @@ void psWriteStackTrace() {
 		// deeper frame could not be found.
 		// CONTEXT need not to be suplied if imageTyp is IMAGE_FILE_MACHINE_I386!
 		if (!stackWalk64(imageType, hProcess, hThread, &s, &c, ReadProcessMemoryRoutine64, symFunctionTableAccess64, symGetModuleBase64, NULL)) {
-			SignalHandlers::dump() << "ERROR: Call to StackWalk64() failed!\n";
+			CrashReports::dump() << "ERROR: Call to StackWalk64() failed!\n";
 			return;
 		}
 
 		if (s.AddrPC.Offset == s.AddrReturn.Offset) {
-			SignalHandlers::dump() << s.AddrPC.Offset << "\n";
-			SignalHandlers::dump() << "ERROR: StackWalk64() endless callstack!";
+			CrashReports::dump() << s.AddrPC.Offset << "\n";
+			CrashReports::dump() << "ERROR: StackWalk64() endless callstack!";
 			return;
 		}
 		if (s.AddrPC.Offset != 0) { // we seem to have a valid PC
-			SignalHandlers::dump() << s.AddrPC.Offset << "\n";
+			CrashReports::dump() << s.AddrPC.Offset << "\n";
 		}
 
 		if (s.AddrReturn.Offset == 0) {

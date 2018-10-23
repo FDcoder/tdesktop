@@ -1,50 +1,119 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/bytes.h"
+
 namespace MTP {
+
+struct ServiceWebRequest {
+        ServiceWebRequest(not_null<QNetworkReply*> reply);
+        ServiceWebRequest(ServiceWebRequest &&other);
+        ServiceWebRequest &operator=(ServiceWebRequest &&other);
+        ~ServiceWebRequest();
+
+        void destroy();
+
+        QPointer<QNetworkReply> reply;
+
+};
 
 class SpecialConfigRequest : public QObject {
 public:
-	SpecialConfigRequest(base::lambda<void(DcId dcId, const std::string &ip, int port)> callback);
-
-	~SpecialConfigRequest();
+	SpecialConfigRequest(
+		Fn<void(
+			DcId dcId,
+			const std::string &ip,
+			int port,
+			bytes::const_span secret)> callback,
+		const QString &phone);
 
 private:
-	void performAppRequest();
-	void performDnsRequest();
-	void appFinished();
-	void dnsFinished();
+	enum class Type {
+		App,
+		Dns,
+	};
+	struct Attempt {
+		Type type;
+		QString domain;
+	};
+
+	void sendNextRequest();
+	void performRequest(const Attempt &attempt);
+	void requestFinished(Type type, not_null<QNetworkReply*> reply);
+	QByteArray finalizeRequest(not_null<QNetworkReply*> reply);
 	void handleResponse(const QByteArray &bytes);
 	bool decryptSimpleConfig(const QByteArray &bytes);
 
-	base::lambda<void(DcId dcId, const std::string &ip, int port)> _callback;
+	Fn<void(
+		DcId dcId,
+		const std::string &ip,
+		int port,
+		bytes::const_span secret)> _callback;
+	QString _phone;
 	MTPhelp_ConfigSimple _simpleConfig;
 
 	QNetworkAccessManager _manager;
-	std::unique_ptr<QNetworkReply> _appReply;
-	std::unique_ptr<QNetworkReply> _dnsReply;
+	std::vector<Attempt> _attempts;
+	std::vector<ServiceWebRequest> _requests;
 
-	std::unique_ptr<DcOptions> _localOptions;
-	std::unique_ptr<Instance> _localInstance;
+};
+
+class DomainResolver : public QObject {
+public:
+	DomainResolver(Fn<void(
+		const QString &domain,
+		const QStringList &ips,
+		TimeMs expireAt)> callback);
+
+	void resolve(const QString &domain);
+
+private:
+	struct AttemptKey {
+		QString domain;
+		bool ipv6 = false;
+
+		inline bool operator<(const AttemptKey &other) const {
+			return (domain < other.domain)
+				|| (domain == other.domain && !ipv6 && other.ipv6);
+		}
+		inline bool operator==(const AttemptKey &other) const {
+			return (domain == other.domain) && (ipv6 == other.ipv6);
+		}
+
+	};
+	struct CacheEntry {
+		QStringList ips;
+		TimeMs expireAt = 0;
+
+	};
+
+	void resolve(const AttemptKey &key);
+	void sendNextRequest(const AttemptKey &key);
+	void performRequest(const AttemptKey &key, const QString &host);
+	void checkExpireAndPushResult(const QString &domain);
+	void requestFinished(
+		const AttemptKey &key,
+		not_null<QNetworkReply*> reply);
+	QByteArray finalizeRequest(
+		const AttemptKey &key,
+		not_null<QNetworkReply*> reply);
+
+	Fn<void(
+		const QString &domain,
+		const QStringList &ips,
+		TimeMs expireAt)> _callback;
+
+	QNetworkAccessManager _manager;
+	std::map<AttemptKey, std::vector<QString>> _attempts;
+	std::map<AttemptKey, std::vector<ServiceWebRequest>> _requests;
+	std::map<AttemptKey, CacheEntry> _cache;
+	TimeMs _lastTimestamp = 0;
 
 };
 

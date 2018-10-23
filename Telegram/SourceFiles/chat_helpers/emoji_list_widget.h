@@ -1,26 +1,20 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
 #include "chat_helpers/tabbed_selector.h"
+#include "ui/widgets/tooltip.h"
+
+namespace Ui {
+namespace Emoji {
+enum class Section;
+} // namespace Emoji
+} // namespace Ui
 
 namespace Window {
 class Controller;
@@ -41,6 +35,7 @@ public:
 	void clearSelection();
 	void handleMouseMove(QPoint globalPos);
 	void handleMouseRelease(QPoint globalPos);
+	void setSingleSize(QSize size);
 
 	void hideFast();
 
@@ -62,6 +57,7 @@ protected:
 
 private:
 	void animationCallback();
+	void updateSize();
 
 	void drawVariant(Painter &p, int variant);
 
@@ -75,6 +71,7 @@ private:
 	int _selected = -1;
 	int _pressedSel = -1;
 	QPoint _lastMousePos;
+	QSize _singleSize;
 
 	bool _hiding = false;
 	QPixmap _cache;
@@ -84,21 +81,24 @@ private:
 
 };
 
-class EmojiListWidget : public TabbedSelector::Inner {
+class EmojiListWidget : public TabbedSelector::Inner, public Ui::AbstractTooltipShower {
 	Q_OBJECT
 
 public:
-	EmojiListWidget(QWidget *parent, gsl::not_null<Window::Controller*> controller);
+	EmojiListWidget(QWidget *parent, not_null<Window::Controller*> controller);
 
 	using Section = Ui::Emoji::Section;
 
-	void setVisibleTopBottom(int visibleTop, int visibleBottom) override;
 	void refreshRecent() override;
 	void clearSelection() override;
 	object_ptr<TabbedSelector::InnerFooter> createFooter() override;
 
 	void showEmojiSection(Section section);
 	Section currentSection(int yOffset) const;
+
+	// Ui::AbstractTooltipShower interface.
+	QString tooltipText() const override;
+	QPoint tooltipPos() const override;
 
 public slots:
 	void onShowPicker();
@@ -112,6 +112,10 @@ signals:
 	void switchToStickers();
 
 protected:
+	void visibleTopBottomUpdated(
+		int visibleTop,
+		int visibleBottom) override;
+
 	void mousePressEvent(QMouseEvent *e) override;
 	void mouseReleaseEvent(QMouseEvent *e) override;
 	void mouseMoveEvent(QMouseEvent *e) override;
@@ -119,11 +123,11 @@ protected:
 	void leaveEventHook(QEvent *e) override;
 	void leaveToChildEvent(QEvent *e, QWidget *child) override;
 	void enterFromChildEvent(QEvent *e, QWidget *child) override;
-	bool event(QEvent *e) override;
+	bool eventHook(QEvent *e) override;
 
 	TabbedSelector::InnerFooter *getFooter() const override;
 	void processHideFinished() override;
-	int countHeight() override;
+	int countDesiredHeight(int newWidth) override;
 
 private:
 	class Footer;
@@ -136,6 +140,7 @@ private:
 		int rowsTop = 0;
 		int rowsBottom = 0;
 	};
+
 	template <typename Callback>
 	bool enumerateSections(Callback callback) const;
 	SectionInfo sectionInfo(int section) const;
@@ -155,7 +160,10 @@ private:
 	int _counts[kEmojiSectionCount];
 	QVector<EmojiPtr> _emoji[kEmojiSectionCount];
 
-	int32 _esize;
+	int _rowsLeft = 0;
+	int _columnCount = 1;
+	QSize _singleSize;
+	int _esize = 0;
 
 	int _selected = -1;
 	int _pressedSel = -1;

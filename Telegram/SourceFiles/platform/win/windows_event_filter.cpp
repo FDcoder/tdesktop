@@ -1,25 +1,13 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/win/windows_event_filter.h"
 
+#include "platform/win/windows_dlls.h"
 #include "mainwindow.h"
 #include "auth_session.h"
 
@@ -29,6 +17,15 @@ namespace {
 EventFilter *instance = nullptr;
 
 int menuShown = 0, menuHidden = 0;
+
+bool IsCompositionEnabled() {
+	if (!Dlls::DwmIsCompositionEnabled) {
+		return false;
+	}
+	auto result = BOOL(FALSE);
+	const auto success = (Dlls::DwmIsCompositionEnabled(&result) == S_OK);
+	return success && result;
+}
 
 } // namespace
 
@@ -75,7 +72,7 @@ bool EventFilter::mainWindowEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
 
 	case WM_TIMECHANGE: {
 		if (AuthSession::Exists()) {
-			AuthSession::Current().checkAutoLockIn(100);
+			Auth().checkAutoLockIn(100);
 		}
 	} return false;
 
@@ -130,8 +127,13 @@ bool EventFilter::mainWindowEvent(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
 	}
 
 	case WM_NCACTIVATE: {
-		auto res = DefWindowProc(hWnd, msg, wParam, -1);
-		if (result) *result = res;
+		if (IsCompositionEnabled()) {
+			const auto res = DefWindowProc(hWnd, msg, wParam, -1);
+			if (result) *result = res;
+		} else {
+			// Thanks https://github.com/melak47/BorderlessWindow
+			if (result) *result = 1;
+		}
 	} return true;
 
 	case WM_WINDOWPOSCHANGING:

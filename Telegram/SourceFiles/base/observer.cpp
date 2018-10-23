@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "base/observer.h"
 
@@ -25,6 +12,7 @@ namespace internal {
 namespace {
 
 bool CantUseObservables = false;
+void (*HandleDelayedMethod)() = nullptr;
 
 struct ObservableListWrap {
 	~ObservableListWrap() {
@@ -48,7 +36,9 @@ ObservableListWrap &ActiveObservables() {
 void RegisterPendingObservable(ObservableCallHandlers *handlers) {
 	if (CantUseObservables) return;
 	PendingObservables().list.insert(handlers);
-	Global::RefHandleObservables().call();
+	if (HandleDelayedMethod) {
+		HandleDelayedMethod();
+	}
 }
 
 void UnregisterActiveObservable(ObservableCallHandlers *handlers) {
@@ -64,6 +54,10 @@ void UnregisterObservable(ObservableCallHandlers *handlers) {
 
 } // namespace internal
 
+void InitObservables(void(*HandleDelayed)()) {
+	internal::HandleDelayedMethod = HandleDelayed;
+}
+
 void HandleObservables() {
 	if (internal::CantUseObservables) return;
 	auto &active = internal::ActiveObservables().list;
@@ -75,6 +69,17 @@ void HandleObservables() {
 			active.erase(active.begin());
 		}
 	}
+}
+
+rpl::producer<> ObservableViewer(base::Observable<void> &observable) {
+	return [&observable](const auto &consumer) {
+		auto lifetime = rpl::lifetime();
+		lifetime.make_state<base::Subscription>(
+			observable.add_subscription([consumer]() {
+				consumer.put_next({});
+			}));
+		return lifetime;
+	};
 }
 
 } // namespace base

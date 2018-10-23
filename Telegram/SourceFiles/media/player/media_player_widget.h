@@ -1,24 +1,13 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
+
+#include "ui/rp_widget.h"
 
 class AudioMsgId;
 
@@ -41,11 +30,11 @@ class PlayButton;
 class VolumeWidget;
 struct TrackState;
 
-class Widget : public TWidget, private base::Subscriber {
+class Widget : public Ui::RpWidget, private base::Subscriber {
 public:
 	Widget(QWidget *parent);
 
-	void setCloseCallback(base::lambda<void()> callback);
+	void setCloseCallback(Fn<void()> callback);
 	void stopAndClose();
 	void setShadowGeometryToLeft(int x, int y, int w, int h);
 	void showShadow();
@@ -101,7 +90,7 @@ private:
 	// We change _voiceIsActive to false only manually or from tracksFinished().
 	AudioMsgId::Type _type = AudioMsgId::Type::Unknown;
 	bool _voiceIsActive = false;
-	base::lambda<void()> _closeCallback;
+	Fn<void()> _closeCallback;
 
 	bool _labelsOver = false;
 	bool _labelsDown = false;
@@ -118,6 +107,8 @@ private:
 	object_ptr<Ui::PlainShadow> _shadow = { nullptr };
 	object_ptr<Ui::FilledSlider> _playbackSlider;
 	std::unique_ptr<Clip::Playback> _playback;
+
+	rpl::lifetime _playlistChangesLifetime;
 
 };
 

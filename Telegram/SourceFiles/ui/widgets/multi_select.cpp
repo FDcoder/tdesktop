@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/widgets/multi_select.h"
 
@@ -25,6 +12,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "ui/widgets/input_fields.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/effects/cross_animation.h"
+#include "ui/text_options.h"
 #include "lang/lang_keys.h"
 
 namespace Ui {
@@ -43,7 +31,7 @@ MultiSelect::Item::Item(const style::MultiSelectItem &st, uint64 id, const QStri
 }
 
 void MultiSelect::Item::setText(const QString &text) {
-	_text.setText(_st.style, text, _textNameOptions);
+	_text.setText(_st.style, text, NameTextOptions());
 	_width = _st.height + _st.padding.left() + _text.maxWidth() + _st.padding.right();
 	accumulate_min(_width, _st.maxWidth);
 }
@@ -214,7 +202,7 @@ QRect MultiSelect::Item::paintArea(int outerWidth) const {
 void MultiSelect::Item::prepareCache() {
 	if (!_cache.isNull()) return;
 
-	t_assert(!_visibility.animating());
+	Assert(!_visibility.animating());
 	auto cacheWidth = _width * kWideScale * cIntRetinaFactor();
 	auto cacheHeight = _st.height * kWideScale * cIntRetinaFactor();
 	auto data = QImage(cacheWidth, cacheHeight, QImage::Format_ARGB32_Premultiplied);
@@ -243,7 +231,11 @@ void MultiSelect::Item::setOver(bool over) {
 	}
 }
 
-MultiSelect::MultiSelect(QWidget *parent, const style::MultiSelect &st, base::lambda<QString()> placeholderFactory) : TWidget(parent)
+MultiSelect::MultiSelect(
+	QWidget *parent,
+	const style::MultiSelect &st,
+	Fn<QString()> placeholderFactory)
+: RpWidget(parent)
 , _st(st)
 , _scroll(this, _st.scroll) {
 	_inner = _scroll->setOwnedWidget(object_ptr<Inner>(this, st, std::move(placeholderFactory), [this](int activeTop, int activeBottom) {
@@ -293,15 +285,15 @@ void MultiSelect::scrollTo(int activeTop, int activeBottom) {
 	}
 }
 
-void MultiSelect::setQueryChangedCallback(base::lambda<void(const QString &query)> callback) {
+void MultiSelect::setQueryChangedCallback(Fn<void(const QString &query)> callback) {
 	_queryChangedCallback = std::move(callback);
 }
 
-void MultiSelect::setSubmittedCallback(base::lambda<void(bool ctrlShiftEnter)> callback) {
+void MultiSelect::setSubmittedCallback(Fn<void(Qt::KeyboardModifiers)> callback) {
 	_inner->setSubmittedCallback(std::move(callback));
 }
 
-void MultiSelect::setResizedCallback(base::lambda<void()> callback) {
+void MultiSelect::setResizedCallback(Fn<void()> callback) {
 	_resizedCallback = std::move(callback);
 }
 
@@ -332,7 +324,7 @@ void MultiSelect::finishItemsBunch() {
 	_inner->finishItemsBunch(AddItemWay::SkipAnimation);
 }
 
-void MultiSelect::setItemRemovedCallback(base::lambda<void(uint64 itemId)> callback) {
+void MultiSelect::setItemRemovedCallback(Fn<void(uint64 itemId)> callback) {
 	_inner->setItemRemovedCallback(std::move(callback));
 }
 
@@ -361,29 +353,25 @@ int MultiSelect::resizeGetHeight(int newWidth) {
 	return newHeight;
 }
 
-MultiSelect::Inner::Inner(QWidget *parent, const style::MultiSelect &st, base::lambda<QString()> placeholder, ScrollCallback callback) : TWidget(parent)
+MultiSelect::Inner::Inner(QWidget *parent, const style::MultiSelect &st, Fn<QString()> placeholder, ScrollCallback callback) : TWidget(parent)
 , _st(st)
 , _scrollCallback(std::move(callback))
 , _field(this, _st.field, std::move(placeholder))
 , _cancel(this, _st.fieldCancel) {
 	_field->customUpDown(true);
-	connect(_field, SIGNAL(focused()), this, SLOT(onFieldFocused()));
-	connect(_field, SIGNAL(changed()), this, SLOT(onQueryChanged()));
-	connect(_field, SIGNAL(submitted(bool)), this, SLOT(onSubmitted(bool)));
-	_cancel->setClickedCallback([this] {
+	connect(_field, &Ui::InputField::focused, [=] { fieldFocused(); });
+	connect(_field, &Ui::InputField::changed, [=] { queryChanged(); });
+	connect(_field, &Ui::InputField::submitted, this, &Inner::submitted);
+	_cancel->setClickedCallback([=] {
 		clearQuery();
 		_field->setFocus();
 	});
 	setMouseTracking(true);
 }
 
-void MultiSelect::Inner::onQueryChanged() {
+void MultiSelect::Inner::queryChanged() {
 	auto query = getQuery();
-	if (query.isEmpty()) {
-		_cancel->hideAnimated();
-	} else {
-		_cancel->showAnimated();
-	}
+	_cancel->toggle(!query.isEmpty(), anim::type::normal);
 	updateFieldGeometry();
 	if (_queryChangedCallback) {
 		_queryChangedCallback(query);
@@ -408,17 +396,18 @@ void MultiSelect::Inner::clearQuery() {
 	_field->setText(QString());
 }
 
-void MultiSelect::Inner::setQueryChangedCallback(base::lambda<void(const QString &query)> callback) {
+void MultiSelect::Inner::setQueryChangedCallback(Fn<void(const QString &query)> callback) {
 	_queryChangedCallback = std::move(callback);
 }
 
-void MultiSelect::Inner::setSubmittedCallback(base::lambda<void(bool ctrlShiftEnter)> callback) {
+void MultiSelect::Inner::setSubmittedCallback(
+		Fn<void(Qt::KeyboardModifiers)> callback) {
 	_submittedCallback = std::move(callback);
 }
 
 void MultiSelect::Inner::updateFieldGeometry() {
 	auto fieldFinalWidth = _fieldWidth;
-	if (_cancel->isShown()) {
+	if (_cancel->toggled()) {
 		fieldFinalWidth -= _st.fieldCancelSkip;
 	}
 	_field->resizeToWidth(fieldFinalWidth);
@@ -441,12 +430,12 @@ void MultiSelect::Inner::setActiveItem(int active, ChangeActiveWay skipSetFocus)
 	if (_active == active) return;
 
 	if (_active >= 0) {
-		t_assert(_active < _items.size());
+		Assert(_active < _items.size());
 		_items[_active]->setActive(false);
 	}
 	_active = active;
 	if (_active >= 0) {
-		t_assert(_active < _items.size());
+		Assert(_active < _items.size());
 		_items[_active]->setActive(true);
 	}
 	if (skipSetFocus != ChangeActiveWay::SkipSetFocus) {
@@ -575,7 +564,13 @@ void MultiSelect::Inner::keyPressEvent(QKeyEvent *e) {
 	}
 }
 
-void MultiSelect::Inner::onFieldFocused() {
+void MultiSelect::Inner::submitted(Qt::KeyboardModifiers modifiers) {
+	if (_submittedCallback) {
+		_submittedCallback(modifiers);
+	}
+}
+
+void MultiSelect::Inner::fieldFocused() {
 	setActiveItem(-1, ChangeActiveWay::SkipSetFocus);
 }
 
@@ -594,7 +589,7 @@ void MultiSelect::Inner::updateSelection(QPoint mousePosition) {
 	}
 	if (_selected != selected) {
 		if (_selected >= 0) {
-			t_assert(_selected < _items.size());
+			Assert(_selected < _items.size());
 			_items[_selected]->leaveEvent();
 		}
 		_selected = selected;
@@ -643,7 +638,7 @@ void MultiSelect::Inner::finishItemsBunch(AddItemWay way) {
 	if (way != AddItemWay::SkipAnimation) {
 		_items.back()->showAnimated();
 	} else {
-		_field->finishAnimations();
+		_field->finishAnimating();
 		finishHeightAnimation();
 	}
 }
@@ -657,7 +652,7 @@ void MultiSelect::Inner::computeItemsGeometry(int newWidth) {
 	auto maxVisiblePadding = qMax(_st.padding.left(), _st.padding.right());
 	for_const (auto &item, _items) {
 		auto itemWidth = item->getWidth();
-		t_assert(itemWidth <= newWidth);
+		Assert(itemWidth <= newWidth);
 		if (itemWidth > widthLeft) {
 			itemLeft = 0;
 			itemTop += _st.item.height + _st.itemSkip;
@@ -669,7 +664,7 @@ void MultiSelect::Inner::computeItemsGeometry(int newWidth) {
 	}
 
 	auto fieldMinWidth = _st.fieldMinWidth + _st.fieldCancelSkip;
-	t_assert(fieldMinWidth <= newWidth);
+	Assert(fieldMinWidth <= newWidth);
 	if (fieldMinWidth > widthLeft) {
 		_fieldLeft = 0;
 		_fieldTop = itemTop + _st.item.height + _st.itemSkip;
@@ -714,11 +709,11 @@ void MultiSelect::Inner::setItemText(uint64 itemId, const QString &text) {
 	}
 }
 
-void MultiSelect::Inner::setItemRemovedCallback(base::lambda<void(uint64 itemId)> callback) {
+void MultiSelect::Inner::setItemRemovedCallback(Fn<void(uint64 itemId)> callback) {
 	_itemRemovedCallback = std::move(callback);
 }
 
-void MultiSelect::Inner::setResizedCallback(base::lambda<void(int heightDelta)> callback) {
+void MultiSelect::Inner::setResizedCallback(Fn<void(int heightDelta)> callback) {
 	_resizedCallback = std::move(callback);
 }
 

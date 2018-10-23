@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -43,7 +30,13 @@ struct Cached {
 	int32 paletteChecksum = 0;
 	int32 contentChecksum = 0;
 };
-bool Load(const QString &pathRelative, const QString &pathAbsolute, const QByteArray &content, Cached &cache);
+struct Saved {
+	QString pathRelative;
+	QString pathAbsolute;
+	QByteArray content;
+	Cached cache;
+};
+bool Load(Saved &&saved);
 void Unload();
 
 struct Instance {
@@ -54,20 +47,24 @@ struct Instance {
 };
 
 struct Preview {
-	QString path;
+	QString pathRelative;
+	QString pathAbsolute;
 	Instance instance;
 	QByteArray content;
-	QPixmap preview;
+	QImage preview;
 };
 
 bool Apply(const QString &filepath);
 bool Apply(std::unique_ptr<Preview> preview);
-void ApplyDefault();
+void ApplyDefaultWithPath(const QString &themePath);
 bool ApplyEditedPalette(const QString &path, const QByteArray &content);
 void KeepApplied();
-bool IsNonDefaultUsed();
-bool IsNightTheme();
-void SwitchNightTheme(bool enabled);
+QString NightThemePath();
+bool IsNightMode();
+void SetNightModeValue(bool nightMode);
+void ToggleNightMode();
+void ToggleNightMode(const QString &themePath);
+bool IsNonDefaultBackground();
 void Revert();
 
 bool LoadFromFile(const QString &file, Instance *out, QByteArray *outContent);
@@ -94,6 +91,8 @@ struct BackgroundUpdate {
 
 class ChatBackground : public base::Observable<BackgroundUpdate> {
 public:
+	ChatBackground();
+
 	// This method is allowed to (and should) be called before start().
 	void setThemeData(QImage &&themeImage, bool themeTile);
 
@@ -101,15 +100,15 @@ public:
 	void start();
 	void setImage(int32 id, QImage &&image = QImage());
 	void setTile(bool tile);
+	void setTileDayValue(bool tile);
+	void setTileNightValue(bool tile);
+	void setThemeAbsolutePath(const QString &path);
+	QString themeAbsolutePath() const;
 	void reset();
 
-	enum class ChangeMode {
-		SwitchToThemeBackground,
-		LeaveCurrentCustomBackground,
-	};
-	void setTestingTheme(Instance &&theme, ChangeMode mode = ChangeMode::SwitchToThemeBackground);
+	void setTestingTheme(Instance &&theme);
+	void saveAdjustableColors();
 	void setTestingDefaultTheme();
-	void keepApplied();
 	void revert();
 
 	int32 id() const;
@@ -120,25 +119,55 @@ public:
 		return _pixmapForTiled;
 	}
 	bool tile() const;
-	bool tileForSave() const;
+	bool tileDay() const;
+	bool tileNight() const;
 
 private:
+	struct AdjustableColor {
+		AdjustableColor(style::color data);
+
+		style::color item;
+		QColor original;
+	};
+
 	void ensureStarted();
 	void saveForRevert();
 	void setPreparedImage(QImage &&image);
 	void writeNewBackgroundSettings();
 
+	void adjustPaletteUsingBackground(const QImage &img);
+	void restoreAdjustableColors();
+
+	void setNightModeValue(bool nightMode);
+	bool nightMode() const;
+	void toggleNightMode(std::optional<QString> themePath);
+	void keepApplied(const QString &path, bool write);
+	bool isNonDefaultThemeOrBackground();
+	bool isNonDefaultBackground();
+
+	friend bool IsNightMode();
+	friend void SetNightModeValue(bool nightMode);
+	friend void ToggleNightMode();
+	friend void ToggleNightMode(const QString &themePath);
+	friend void KeepApplied();
+	friend bool IsNonDefaultBackground();
+
 	int32 _id = internal::kUninitializedBackground;
 	QPixmap _pixmap;
 	QPixmap _pixmapForTiled;
-	bool _tile = false;
+	bool _nightMode = false;
+	bool _tileDayValue = false;
+	bool _tileNightValue = true;
 
+	QString _themeAbsolutePath;
 	QImage _themeImage;
 	bool _themeTile = false;
 
 	int32 _idForRevert = internal::kUninitializedBackground;
 	QImage _imageForRevert;
 	bool _tileForRevert = false;
+
+	std::vector<AdjustableColor> _adjustableColors;
 
 };
 
@@ -148,7 +177,7 @@ void ComputeBackgroundRects(QRect wholeFill, QSize imageSize, QRect &to, QRect &
 
 bool CopyColorsToPalette(const QString &path, const QByteArray &themeContent);
 
-bool ReadPaletteValues(const QByteArray &content, base::lambda<bool(QLatin1String name, QLatin1String value)> callback);
+bool ReadPaletteValues(const QByteArray &content, Fn<bool(QLatin1String name, QLatin1String value)> callback);
 
 } // namespace Theme
 } // namespace Window

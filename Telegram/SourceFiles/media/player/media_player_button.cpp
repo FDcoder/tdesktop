@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "media/player/media_player_button.h"
 
@@ -25,7 +12,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 namespace Media {
 namespace Player {
 
-PlayButtonLayout::PlayButtonLayout(const style::MediaPlayerButton &st, base::lambda<void()> callback)
+PlayButtonLayout::PlayButtonLayout(const style::MediaPlayerButton &st, Fn<void()> callback)
 : _st(st)
 , _callback(std::move(callback)) {
 }
@@ -66,16 +53,16 @@ void PlayButtonLayout::paint(Painter &p, const QBrush &brush) {
 		}
 		if (backward) progress = 1. - progress;
 
-		t_assert(from != to);
+		Assert(from != to);
 		if (from == State::Play) {
 			if (to == State::Pause) {
 				paintPlayToPause(p, brush, progress);
 			} else {
-				t_assert(to == State::Cancel);
+				Assert(to == State::Cancel);
 				paintPlayToCancel(p, brush, progress);
 			}
 		} else {
-			t_assert(from == State::Pause && to == State::Cancel);
+			Assert(from == State::Pause && to == State::Cancel);
 			paintPauseToCancel(p, brush, progress);
 		}
 	} else {

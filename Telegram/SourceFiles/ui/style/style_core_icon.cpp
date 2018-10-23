@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/style/style_core_icon.h"
 
@@ -35,43 +22,37 @@ NeverFreedPointer<IconMasks> iconMasks;
 NeverFreedPointer<IconPixmaps> iconPixmaps;
 NeverFreedPointer<IconDatas> iconData;
 
-inline int pxAdjust(int value, int scale) {
-	if (value < 0) {
-		return -pxAdjust(-value, scale);
-	}
-	return qFloor((value * scale / 4.) + 0.1);
-}
-
-QImage createIconMask(const IconMask *mask, DBIScale scale) {
+QImage createIconMask(const IconMask *mask, int scale) {
 	auto maskImage = QImage::fromData(mask->data(), mask->size(), "PNG");
 	maskImage.setDevicePixelRatio(cRetinaFactor());
-	t_assert(!maskImage.isNull());
+	Assert(!maskImage.isNull());
 
 	// images are layouted like this:
-	// 200x 100x
-	// 150x 125x
-	int width = maskImage.width() / 3;
-	int height = qRound((maskImage.height() * 2) / 7.);
-	auto r = QRect(0, 0, width * 2, height * 2);
-	if (!cRetina() && scale != dbisTwo) {
-		if (scale == dbisOne) {
-			r = QRect(width * 2, 0, width, height);
-		} else {
-			int width125 = pxAdjust(width, 5);
-			int height125 = pxAdjust(height, 5);
-			int width150 = pxAdjust(width, 6);
-			int height150 = pxAdjust(height, 6);
-			if (scale == dbisOneAndQuarter) {
-				r = QRect(width150, height * 2, width125, height125);
-			} else {
-				r = QRect(0, height * 2, width150, height150);
-			}
-		}
+	// 100x 200x
+	// 300x
+	scale *= cIntRetinaFactor();
+	const auto width = maskImage.width() / 3;
+	const auto height = maskImage.height() / 5;
+	const auto one = QRect(0, 0, width, height);
+	const auto two = QRect(width, 0, width * 2, height * 2);
+	const auto three = QRect(0, height * 2, width * 3, height * 3);
+	if (scale == 100) {
+		return maskImage.copy(one);
+	} else if (scale == 200) {
+		return maskImage.copy(two);
+	} else if (scale == 300) {
+		return maskImage.copy(three);
 	}
-	return maskImage.copy(r);
+	return maskImage.copy(
+		(scale > 200) ? three : two
+	).scaled(
+		ConvertScale(width, scale),
+		ConvertScale(height, scale),
+		Qt::IgnoreAspectRatio,
+		Qt::SmoothTransformation);
 }
 
-QSize readGeneratedSize(const IconMask *mask, DBIScale scale) {
+QSize readGeneratedSize(const IconMask *mask, int scale) {
 	auto data = mask->data();
 	auto size = mask->size();
 
@@ -84,22 +65,16 @@ QSize readGeneratedSize(const IconMask *mask, DBIScale scale) {
 			size -= sizeTag.size();
 			data += sizeTag.size();
 			auto baForStream = QByteArray::fromRawData(reinterpret_cast<const char*>(data), size);
-			QBuffer buffer(&baForStream);
-			buffer.open(QIODevice::ReadOnly);
-
-			QDataStream stream(&buffer);
+			QDataStream stream(baForStream);
 			stream.setVersion(QDataStream::Qt_5_1);
 
 			qint32 width = 0, height = 0;
 			stream >> width >> height;
-			t_assert(stream.status() == QDataStream::Ok);
+			Assert(stream.status() == QDataStream::Ok);
 
-			switch (scale) {
-			case dbisOne: return QSize(width, height);
-			case dbisOneAndQuarter: return QSize(pxAdjust(width, 5), pxAdjust(height, 5));
-			case dbisOneAndHalf: return QSize(pxAdjust(width, 6), pxAdjust(height, 6));
-			case dbisTwo: return QSize(width * 2, height * 2);
-			}
+			return QSize(
+				ConvertScale(width, scale),
+				ConvertScale(height, scale));
 		} else {
 			Unexpected("Bad data in generated icon!");
 		}
@@ -187,33 +162,58 @@ void MonoIcon::fill(QPainter &p, const QRect &rect, QColor colorOverride) const 
 	}
 }
 
-void MonoIcon::paint(QPainter &p, const QPoint &pos, int outerw, const style::palette &paletteOverride) const {
-	int w = width(), h = height();
-	QPoint fullOffset = pos + offset();
-	int partPosX = rtl() ? (outerw - fullOffset.x() - w) : fullOffset.x();
-	int partPosY = fullOffset.y();
+void MonoIcon::paint(
+		QPainter &p,
+		const QPoint &pos,
+		int outerw,
+		const style::palette &paletteOverride) const {
+	auto size = readGeneratedSize(_mask, cScale());
+	auto maskImage = QImage();
+	if (size.isEmpty()) {
+		maskImage = createIconMask(_mask, cScale());
+		size = maskImage.size() / cIntRetinaFactor();
+	}
 
-	ensureLoaded();
-	if (_pixmap.isNull()) {
+	const auto w = size.width();
+	const auto h = size.height();
+	const auto fullOffset = pos + offset();
+	const auto partPosX = rtl() ? (outerw - fullOffset.x() - w) : fullOffset.x();
+	const auto partPosY = fullOffset.y();
+
+	if (!maskImage.isNull()) {
+		auto colorizedImage = QImage(
+			maskImage.size(),
+			QImage::Format_ARGB32_Premultiplied);
+		colorizeImage(maskImage, _color[paletteOverride]->c, &colorizedImage);
+		p.drawImage(partPosX, partPosY, colorizedImage);
+	} else {
 		p.fillRect(partPosX, partPosY, w, h, _color[paletteOverride]);
-	} else {
-		ensureColorizedImage(_color[paletteOverride]->c);
-		p.drawImage(partPosX, partPosY, _colorizedImage);
 	}
 }
 
-void MonoIcon::fill(QPainter &p, const QRect &rect, const style::palette &paletteOverride) const {
-	ensureLoaded();
-	if (_pixmap.isNull()) {
+void MonoIcon::fill(
+		QPainter &p,
+		const QRect &rect,
+		const style::palette &paletteOverride) const {
+	auto size = readGeneratedSize(_mask, cScale());
+	auto maskImage = QImage();
+	if (size.isEmpty()) {
+		maskImage = createIconMask(_mask, cScale());
+		size = maskImage.size() / cIntRetinaFactor();
+	}
+	if (!maskImage.isNull()) {
+		auto colorizedImage = QImage(
+			maskImage.size(),
+			QImage::Format_ARGB32_Premultiplied);
+		colorizeImage(maskImage, _color[paletteOverride]->c, &colorizedImage);
+		p.drawImage(rect, colorizedImage, colorizedImage.rect());
+	} else {
 		p.fillRect(rect, _color[paletteOverride]);
-	} else {
-		ensureColorizedImage(_color[paletteOverride]->c);
-		p.drawImage(rect, _colorizedImage, _colorizedImage.rect());
 	}
 }
 
-QImage MonoIcon::instance(QColor colorOverride, DBIScale scale) const {
-	if (scale == dbisAuto) {
+QImage MonoIcon::instance(QColor colorOverride, int scale) const {
+	if (scale == kInterfaceScaleAuto) {
 		ensureLoaded();
 		auto result = QImage(size() * cIntRetinaFactor(), QImage::Format_ARGB32_Premultiplied);
 		result.setDevicePixelRatio(cRetinaFactor());
@@ -287,8 +287,8 @@ void IconData::fill(QPainter &p, const QRect &rect) const {
 
 	auto partSize = _parts[0].size();
 	for_const (auto &part, _parts) {
-		t_assert(part.offset() == QPoint(0, 0));
-		t_assert(part.size() == partSize);
+		Assert(part.offset() == QPoint(0, 0));
+		Assert(part.size() == partSize);
 		part.fill(p, rect);
 	}
 }
@@ -298,16 +298,16 @@ void IconData::fill(QPainter &p, const QRect &rect, QColor colorOverride) const 
 
 	auto partSize = _parts[0].size();
 	for_const (auto &part, _parts) {
-		t_assert(part.offset() == QPoint(0, 0));
-		t_assert(part.size() == partSize);
+		Assert(part.offset() == QPoint(0, 0));
+		Assert(part.size() == partSize);
 		part.fill(p, rect, colorOverride);
 	}
 }
 
-QImage IconData::instance(QColor colorOverride, DBIScale scale) const {
-	t_assert(_parts.size() == 1);
+QImage IconData::instance(QColor colorOverride, int scale) const {
+	Assert(_parts.size() == 1);
 	auto &part = _parts[0];
-	t_assert(part.offset() == QPoint(0, 0));
+	Assert(part.offset() == QPoint(0, 0));
 	return part.instance(colorOverride, scale);
 }
 

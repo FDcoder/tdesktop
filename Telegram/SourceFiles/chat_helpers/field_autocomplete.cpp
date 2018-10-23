@@ -1,25 +1,14 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/field_autocomplete.h"
 
+#include "data/data_document.h"
+#include "data/data_peer_values.h"
 #include "mainwindow.h"
 #include "apiwrap.h"
 #include "storage/localstorage.h"
@@ -28,6 +17,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "styles/style_widgets.h"
 #include "styles/style_chat_helpers.h"
 #include "auth_session.h"
+#include "chat_helpers/stickers.h"
 
 FieldAutocomplete::FieldAutocomplete(QWidget *parent) : TWidget(parent)
 , _scroll(this, st::mentionScroll) {
@@ -39,7 +29,7 @@ FieldAutocomplete::FieldAutocomplete(QWidget *parent) : TWidget(parent)
 	connect(_inner, SIGNAL(mentionChosen(UserData*, FieldAutocomplete::ChooseMethod)), this, SIGNAL(mentionChosen(UserData*, FieldAutocomplete::ChooseMethod)));
 	connect(_inner, SIGNAL(hashtagChosen(QString, FieldAutocomplete::ChooseMethod)), this, SIGNAL(hashtagChosen(QString, FieldAutocomplete::ChooseMethod)));
 	connect(_inner, SIGNAL(botCommandChosen(QString, FieldAutocomplete::ChooseMethod)), this, SIGNAL(botCommandChosen(QString, FieldAutocomplete::ChooseMethod)));
-	connect(_inner, SIGNAL(stickerChosen(DocumentData*, FieldAutocomplete::ChooseMethod)), this, SIGNAL(stickerChosen(DocumentData*, FieldAutocomplete::ChooseMethod)));
+	connect(_inner, SIGNAL(stickerChosen(not_null<DocumentData*>,FieldAutocomplete::ChooseMethod)), this, SIGNAL(stickerChosen(not_null<DocumentData*>,FieldAutocomplete::ChooseMethod)));
 	connect(_inner, SIGNAL(mustScrollTo(int, int)), _scroll, SLOT(scrollToY(int, int)));
 
 	_scroll->show();
@@ -67,7 +57,10 @@ void FieldAutocomplete::paintEvent(QPaintEvent *e) {
 	p.fillRect(rect(), st::mentionBg);
 }
 
-void FieldAutocomplete::showFiltered(PeerData *peer, QString query, bool addInlineBots) {
+void FieldAutocomplete::showFiltered(
+		not_null<PeerData*> peer,
+		QString query,
+		bool addInlineBots) {
 	_chat = peer->asChat();
 	_user = peer->asUser();
 	_channel = peer->asChannel();
@@ -111,13 +104,13 @@ void FieldAutocomplete::showStickers(EmojiPtr emoji) {
 	_emoji = emoji;
 	_type = Type::Stickers;
 	if (!emoji) {
-		rowsUpdated(_mrows, _hrows, _brows, StickerPack(), false);
+		rowsUpdated(_mrows, _hrows, _brows, internal::StickerRows(), false);
 		return;
 	}
 
-	_chat = 0;
-	_user = 0;
-	_channel = 0;
+	_chat = nullptr;
+	_user = nullptr;
+	_channel = nullptr;
 
 	updateFiltered(resetScroll);
 }
@@ -145,38 +138,15 @@ void FieldAutocomplete::updateFiltered(bool resetScroll) {
 	internal::MentionRows mrows;
 	internal::HashtagRows hrows;
 	internal::BotCommandRows brows;
-	StickerPack srows;
+	internal::StickerRows srows;
 	if (_emoji) {
-		auto original = _emoji->original();
-		QMap<uint64, uint64> setsToRequest;
-		auto &sets = Global::RefStickerSets();
-		auto &order = Global::StickerSetsOrder();
-		for (auto i = 0, l = order.size(); i != l; ++i) {
-			auto it = sets.find(order[i]);
-			if (it != sets.cend()) {
-				if (it->emoji.isEmpty()) {
-					setsToRequest.insert(it->id, it->access);
-					it->flags |= MTPDstickerSet_ClientFlag::f_not_loaded;
-				} else if (!(it->flags & MTPDstickerSet::Flag::f_archived)) {
-					auto i = it->emoji.constFind(original);
-					if (i != it->emoji.cend()) {
-						srows += *i;
-					}
-				}
-			}
-		}
-		if (!setsToRequest.isEmpty() && App::api()) {
-			for (QMap<uint64, uint64>::const_iterator i = setsToRequest.cbegin(), e = setsToRequest.cend(); i != e; ++i) {
-				App::api()->scheduleStickerSetRequest(i.key(), i.value());
-			}
-			App::api()->requestStickerSets();
-		}
+		srows = Stickers::GetListByEmoji(_emoji, _stickersSeed);
 	} else if (_type == Type::Mentions) {
 		int maxListSize = _addInlineBots ? cRecentInlineBots().size() : 0;
 		if (_chat) {
-			maxListSize += (_chat->participants.isEmpty() ? _chat->lastAuthors.size() : _chat->participants.size());
+			maxListSize += (_chat->participants.empty() ? _chat->lastAuthors.size() : _chat->participants.size());
 		} else if (_channel && _channel->isMegagroup()) {
-			if (_channel->mgInfo->lastParticipants.isEmpty() || _channel->lastParticipantsCountOutdated()) {
+			if (_channel->mgInfo->lastParticipants.empty() || _channel->lastParticipantsCountOutdated()) {
 			} else {
 				maxListSize += _channel->mgInfo->lastParticipants.size();
 			}
@@ -192,10 +162,10 @@ void FieldAutocomplete::updateFiltered(bool resetScroll) {
 			}
 			return true;
 		};
-		auto filterNotPassedByName = [this, &filterNotPassedByUsername](UserData *user) -> bool {
-			for_const (auto &namePart, user->names) {
-				if (namePart.startsWith(_filter, Qt::CaseInsensitive)) {
-					bool exactUsername = (user->username.compare(_filter, Qt::CaseInsensitive) == 0);
+		auto filterNotPassedByName = [&](UserData *user) -> bool {
+			for (const auto &nameWord : user->nameWords()) {
+				if (nameWord.startsWith(_filter, Qt::CaseInsensitive)) {
+					auto exactUsername = (user->username.compare(_filter, Qt::CaseInsensitive) == 0);
 					return exactUsername;
 				}
 			}
@@ -212,26 +182,28 @@ void FieldAutocomplete::updateFiltered(bool resetScroll) {
 			}
 		}
 		if (_chat) {
-			QMultiMap<int32, UserData*> ordered;
-			mrows.reserve(mrows.size() + (_chat->participants.isEmpty() ? _chat->lastAuthors.size() : _chat->participants.size()));
+			auto ordered = QMultiMap<TimeId, not_null<UserData*>>();
+			const auto byOnline = [&](not_null<UserData*> user) {
+				return Data::SortByOnlineValue(user, now);
+			};
+			mrows.reserve(mrows.size() + (_chat->participants.empty() ? _chat->lastAuthors.size() : _chat->participants.size()));
 			if (_chat->noParticipantInfo()) {
-				if (App::api()) App::api()->requestFullPeer(_chat);
-			} else if (!_chat->participants.isEmpty()) {
-				for (auto i = _chat->participants.cbegin(), e = _chat->participants.cend(); i != e; ++i) {
-					auto user = i.key();
+				Auth().api().requestFullPeer(_chat);
+			} else if (!_chat->participants.empty()) {
+				for (const auto [user, v] : _chat->participants) {
 					if (user->isInaccessible()) continue;
 					if (!listAllSuggestions && filterNotPassedByName(user)) continue;
 					if (indexOfInFirstN(mrows, user, recentInlineBots) >= 0) continue;
-					ordered.insertMulti(App::onlineForSort(user, now), user);
+					ordered.insertMulti(byOnline(user), user);
 				}
 			}
-			for_const (auto user, _chat->lastAuthors) {
+			for (const auto user : _chat->lastAuthors) {
 				if (user->isInaccessible()) continue;
 				if (!listAllSuggestions && filterNotPassedByName(user)) continue;
 				if (indexOfInFirstN(mrows, user, recentInlineBots) >= 0) continue;
 				mrows.push_back(user);
 				if (!ordered.isEmpty()) {
-					ordered.remove(App::onlineForSort(user, now), user);
+					ordered.remove(byOnline(user), user);
 				}
 			}
 			if (!ordered.isEmpty()) {
@@ -242,11 +214,11 @@ void FieldAutocomplete::updateFiltered(bool resetScroll) {
 			}
 		} else if (_channel && _channel->isMegagroup()) {
 			QMultiMap<int32, UserData*> ordered;
-			if (_channel->mgInfo->lastParticipants.isEmpty() || _channel->lastParticipantsCountOutdated()) {
-				if (App::api()) App::api()->requestLastParticipants(_channel);
+			if (_channel->mgInfo->lastParticipants.empty() || _channel->lastParticipantsCountOutdated()) {
+				Auth().api().requestLastParticipants(_channel);
 			} else {
 				mrows.reserve(mrows.size() + _channel->mgInfo->lastParticipants.size());
-				for_const (auto user, _channel->mgInfo->lastParticipants) {
+				for (const auto user : _channel->mgInfo->lastParticipants) {
 					if (user->isInaccessible()) continue;
 					if (!listAllSuggestions && filterNotPassedByName(user)) continue;
 					if (indexOfInFirstN(mrows, user, recentInlineBots) >= 0) continue;
@@ -271,28 +243,35 @@ void FieldAutocomplete::updateFiltered(bool resetScroll) {
 		int32 cnt = 0;
 		if (_chat) {
 			if (_chat->noParticipantInfo()) {
-				if (App::api()) App::api()->requestFullPeer(_chat);
-			} else if (!_chat->participants.isEmpty()) {
-				for (auto i = _chat->participants.cbegin(), e = _chat->participants.cend(); i != e; ++i) {
-					auto user = i.key();
+				Auth().api().requestFullPeer(_chat);
+			} else if (!_chat->participants.empty()) {
+				for (const auto [user, version] : _chat->participants) {
 					if (!user->botInfo) continue;
-					if (!user->botInfo->inited && App::api()) App::api()->requestFullPeer(user);
+					if (!user->botInfo->inited) {
+						Auth().api().requestFullPeer(user);
+					}
 					if (user->botInfo->commands.isEmpty()) continue;
 					bots.insert(user, true);
 					cnt += user->botInfo->commands.size();
 				}
 			}
 		} else if (_user && _user->botInfo) {
-			if (!_user->botInfo->inited && App::api()) App::api()->requestFullPeer(_user);
+			if (!_user->botInfo->inited) {
+				Auth().api().requestFullPeer(_user);
+			}
 			cnt = _user->botInfo->commands.size();
 			bots.insert(_user, true);
 		} else if (_channel && _channel->isMegagroup()) {
-			if (_channel->mgInfo->bots.isEmpty()) {
-				if (!_channel->mgInfo->botStatus && App::api()) App::api()->requestBots(_channel);
+			if (_channel->mgInfo->bots.empty()) {
+				if (!_channel->mgInfo->botStatus) {
+					Auth().api().requestBots(_channel);
+				}
 			} else {
 				for_const (auto user, _channel->mgInfo->bots) {
 					if (!user->botInfo) continue;
-					if (!user->botInfo->inited && App::api()) App::api()->requestFullPeer(user);
+					if (!user->botInfo->inited) {
+						Auth().api().requestFullPeer(user);
+					}
 					if (user->botInfo->commands.isEmpty()) continue;
 					bots.insert(user, true);
 					cnt += user->botInfo->commands.size();
@@ -307,7 +286,9 @@ void FieldAutocomplete::updateFiltered(bool resetScroll) {
 					auto user = *i;
 					if (!user->botInfo) continue;
 					if (!bots.contains(user)) continue;
-					if (!user->botInfo->inited && App::api()) App::api()->requestFullPeer(user);
+					if (!user->botInfo->inited) {
+						Auth().api().requestFullPeer(user);
+					}
 					if (user->botInfo->commands.isEmpty()) continue;
 					bots.remove(user);
 					for (auto j = 0, l = user->botInfo->commands.size(); j != l; ++j) {
@@ -341,11 +322,12 @@ void FieldAutocomplete::updateFiltered(bool resetScroll) {
 	_inner->setRecentInlineBotsInRows(recentInlineBots);
 }
 
-void FieldAutocomplete::rowsUpdated(const internal::MentionRows &mrows, const internal::HashtagRows &hrows, const internal::BotCommandRows &brows, const StickerPack &srows, bool resetScroll) {
-	if (mrows.isEmpty() && hrows.isEmpty() && brows.isEmpty() && srows.isEmpty()) {
+void FieldAutocomplete::rowsUpdated(const internal::MentionRows &mrows, const internal::HashtagRows &hrows, const internal::BotCommandRows &brows, const internal::StickerRows &srows, bool resetScroll) {
+	if (mrows.isEmpty() && hrows.isEmpty() && brows.isEmpty() && srows.empty()) {
 		if (!isHidden()) {
 			hideAnimated();
 		}
+		_scroll->scrollToY(0);
 		_mrows.clear();
 		_hrows.clear();
 		_brows.clear();
@@ -377,7 +359,7 @@ void FieldAutocomplete::setBoundings(QRect boundings) {
 
 void FieldAutocomplete::recount(bool resetScroll) {
 	int32 h = 0, oldst = _scroll->scrollTop(), st = oldst, maxh = 4.5 * st::mentionHeight;
-	if (!_srows.isEmpty()) {
+	if (!_srows.empty()) {
 		int32 stickersPerRow = qMax(1, int32(_boundings.width() - 2 * st::stickerPanPadding) / int32(st::stickerPanSize.width()));
 		int32 rows = rowscount(_srows.size(), stickersPerRow);
 		h = st::stickerPanPadding + rows * st::stickerPanSize.height();
@@ -417,7 +399,7 @@ void FieldAutocomplete::hideAnimated() {
 
 	if (_cache.isNull()) {
 		_scroll->show();
-		_cache = myGrab(this);
+		_cache = Ui::GrabWidget(this);
 	}
 	_scroll->hide();
 	_hiding = true;
@@ -437,8 +419,9 @@ void FieldAutocomplete::showAnimated() {
 		return;
 	}
 	if (_cache.isNull()) {
+		_stickersSeed = rand_value<uint64>();
 		_scroll->show();
-		_cache = myGrab(this);
+		_cache = Ui::GrabWidget(this);
 	}
 	_scroll->hide();
 	_hiding = false;
@@ -498,7 +481,7 @@ bool FieldAutocomplete::eventFilter(QObject *obj, QEvent *e) {
 		QKeyEvent *ev = static_cast<QKeyEvent*>(e);
 		if (!(ev->modifiers() & (Qt::AltModifier | Qt::ControlModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
 			if (!hidden) {
-				if (ev->key() == Qt::Key_Up || ev->key() == Qt::Key_Down || (!_srows.isEmpty() && (ev->key() == Qt::Key_Left || ev->key() == Qt::Key_Right))) {
+				if (ev->key() == Qt::Key_Up || ev->key() == Qt::Key_Down || (!_srows.empty() && (ev->key() == Qt::Key_Left || ev->key() == Qt::Key_Right))) {
 					return _inner->moveSel(ev->key());
 				} else if (ev->key() == Qt::Key_Enter || ev->key() == Qt::Key_Return) {
 					return _inner->chooseSelected(ChooseMethod::ByEnter);
@@ -519,7 +502,7 @@ FieldAutocomplete::~FieldAutocomplete() {
 
 namespace internal {
 
-FieldAutocompleteInner::FieldAutocompleteInner(FieldAutocomplete *parent, MentionRows *mrows, HashtagRows *hrows, BotCommandRows *brows, StickerPack *srows)
+FieldAutocompleteInner::FieldAutocompleteInner(FieldAutocomplete *parent, MentionRows *mrows, HashtagRows *hrows, BotCommandRows *brows, StickerRows *srows)
 : _parent(parent)
 , _mrows(mrows)
 , _hrows(hrows)
@@ -534,7 +517,7 @@ FieldAutocompleteInner::FieldAutocompleteInner(FieldAutocomplete *parent, Mentio
 , _previewShown(false) {
 	_previewTimer.setSingleShot(true);
 	connect(&_previewTimer, SIGNAL(timeout()), this, SLOT(onPreview()));
-	subscribe(AuthSession::CurrentDownloaderTaskFinished(), [this] { update(); });
+	subscribe(Auth().downloaderTaskFinished(), [this] { update(); });
 }
 
 void FieldAutocompleteInner::paintEvent(QPaintEvent *e) {
@@ -543,12 +526,21 @@ void FieldAutocompleteInner::paintEvent(QPaintEvent *e) {
 	QRect r(e->rect());
 	if (r != rect()) p.setClipRect(r);
 
-	int32 atwidth = st::mentionFont->width('@'), hashwidth = st::mentionFont->width('#');
-	int32 mentionleft = 2 * st::mentionPadding.left() + st::mentionPhotoSize;
-	int32 mentionwidth = width() - mentionleft - 2 * st::mentionPadding.right();
-	int32 htagleft = st::historyAttach.width + st::historyComposeField.textMrg.left() - st::lineWidth, htagwidth = width() - st::mentionPadding.right() - htagleft - st::mentionScroll.width;
+	auto atwidth = st::mentionFont->width('@');
+	auto hashwidth = st::mentionFont->width('#');
+	auto mentionleft = 2 * st::mentionPadding.left() + st::mentionPhotoSize;
+	auto mentionwidth = width()
+		- mentionleft
+		- 2 * st::mentionPadding.right();
+	auto htagleft = st::historyAttach.width
+		+ st::historyComposeField.textMargins.left()
+		- st::lineWidth;
+	auto htagwidth = width()
+		- st::mentionPadding.right()
+		- htagleft
+		- st::mentionScroll.width;
 
-	if (!_srows->isEmpty()) {
+	if (!_srows->empty()) {
 		int32 rows = rowscount(_srows->size(), _stickersPerRow);
 		int32 fromrow = floorclamp(r.y() - st::stickerPanPadding, st::stickerPanSize.height(), 0, rows);
 		int32 torow = ceilclamp(r.y() + r.height() - st::stickerPanPadding, st::stickerPanSize.height(), 0, rows);
@@ -559,8 +551,8 @@ void FieldAutocompleteInner::paintEvent(QPaintEvent *e) {
 				int32 index = row * _stickersPerRow + col;
 				if (index >= _srows->size()) break;
 
-				DocumentData *sticker = _srows->at(index);
-				if (!sticker->sticker()) continue;
+				const auto document = _srows->at(index);
+				if (!document->sticker()) continue;
 
 				QPoint pos(st::stickerPanPadding + col * st::stickerPanSize.width(), st::stickerPanPadding + row * st::stickerPanSize.height());
 				if (_sel == index) {
@@ -569,23 +561,16 @@ void FieldAutocompleteInner::paintEvent(QPaintEvent *e) {
 					App::roundRect(p, QRect(tl, st::stickerPanSize), st::emojiPanHover, StickerHoverCorners);
 				}
 
-				bool goodThumb = !sticker->thumb->isNull() && ((sticker->thumb->width() >= 128) || (sticker->thumb->height() >= 128));
-				if (goodThumb) {
-					sticker->thumb->load();
-				} else {
-					sticker->checkSticker();
-				}
+				document->checkStickerThumb();
 
-				float64 coef = qMin((st::stickerPanSize.width() - st::buttonRadius * 2) / float64(sticker->dimensions.width()), (st::stickerPanSize.height() - st::buttonRadius * 2) / float64(sticker->dimensions.height()));
+				float64 coef = qMin((st::stickerPanSize.width() - st::buttonRadius * 2) / float64(document->dimensions.width()), (st::stickerPanSize.height() - st::buttonRadius * 2) / float64(document->dimensions.height()));
 				if (coef > 1) coef = 1;
-				int32 w = qRound(coef * sticker->dimensions.width()), h = qRound(coef * sticker->dimensions.height());
+				int32 w = qRound(coef * document->dimensions.width()), h = qRound(coef * document->dimensions.height());
 				if (w < 1) w = 1;
 				if (h < 1) h = 1;
 				QPoint ppos = pos + QPoint((st::stickerPanSize.width() - w) / 2, (st::stickerPanSize.height() - h) / 2);
-				if (goodThumb) {
-					p.drawPixmapLeft(ppos, width(), sticker->thumb->pix(w, h));
-				} else if (!sticker->sticker()->img->isNull()) {
-					p.drawPixmapLeft(ppos, width(), sticker->sticker()->img->pix(w, h));
+				if (const auto image = document->getStickerThumb()) {
+					p.drawPixmapLeft(ppos, width(), image->pix(document->stickerSetOrigin(), w, h));
 				}
 			}
 		}
@@ -718,7 +703,7 @@ bool FieldAutocompleteInner::moveSel(int key) {
 	_mouseSel = false;
 	int32 maxSel = (_mrows->isEmpty() ? (_hrows->isEmpty() ? (_brows->isEmpty() ? _srows->size() : _brows->size()) : _hrows->size()) : _mrows->size());
 	int32 direction = (key == Qt::Key_Up) ? -1 : (key == Qt::Key_Down ? 1 : 0);
-	if (!_srows->isEmpty()) {
+	if (!_srows->empty()) {
 		if (key == Qt::Key_Left) {
 			direction = -1;
 		} else if (key == Qt::Key_Right) {
@@ -742,9 +727,9 @@ bool FieldAutocompleteInner::moveSel(int key) {
 }
 
 bool FieldAutocompleteInner::chooseSelected(FieldAutocomplete::ChooseMethod method) const {
-	if (!_srows->isEmpty()) {
+	if (!_srows->empty()) {
 		if (_sel >= 0 && _sel < _srows->size()) {
-			emit stickerChosen(_srows->at(_sel), method);
+			emit stickerChosen((*_srows)[_sel], method);
 			return true;
 		}
 	} else if (!_mrows->isEmpty()) {
@@ -812,7 +797,7 @@ void FieldAutocompleteInner::mousePressEvent(QMouseEvent *e) {
 
 			_mouseSel = true;
 			onUpdateSelected(true);
-		} else if (_srows->isEmpty()) {
+		} else if (_srows->empty()) {
 			chooseSelected(FieldAutocomplete::ChooseMethod::ByClick);
 		} else {
 			_down = _sel;
@@ -836,7 +821,7 @@ void FieldAutocompleteInner::mouseReleaseEvent(QMouseEvent *e) {
 		return;
 	}
 
-	if (_sel < 0 || _sel != pressed || _srows->isEmpty()) return;
+	if (_sel < 0 || _sel != pressed || _srows->empty()) return;
 
 	chooseSelected(FieldAutocomplete::ChooseMethod::ByClick);
 }
@@ -856,7 +841,7 @@ void FieldAutocompleteInner::leaveEventHook(QEvent *e) {
 
 void FieldAutocompleteInner::updateSelectedRow() {
 	if (_sel >= 0) {
-		if (_srows->isEmpty()) {
+		if (_srows->empty()) {
 			update(0, _sel * st::mentionHeight, width(), st::mentionHeight);
 		} else {
 			int32 row = _sel / _stickersPerRow, col = _sel % _stickersPerRow;
@@ -871,7 +856,7 @@ void FieldAutocompleteInner::setSel(int sel, bool scroll) {
 	updateSelectedRow();
 
 	if (scroll && _sel >= 0) {
-		if (_srows->isEmpty()) {
+		if (_srows->empty()) {
 			emit mustScrollTo(_sel * st::mentionHeight, (_sel + 1) * st::mentionHeight);
 		} else {
 			int32 row = _sel / _stickersPerRow;
@@ -887,7 +872,7 @@ void FieldAutocompleteInner::onUpdateSelected(bool force) {
 	if (_down >= 0 && !_previewShown) return;
 
 	int32 sel = -1, maxSel = 0;
-	if (!_srows->isEmpty()) {
+	if (!_srows->empty()) {
 		int32 rows = rowscount(_srows->size(), _stickersPerRow);
 		int32 row = (mouse.y() >= st::stickerPanPadding) ? ((mouse.y() - st::stickerPanPadding) / st::stickerPanSize.height()) : -1;
 		int32 col = (mouse.x() >= st::stickerPanPadding) ? ((mouse.x() - st::stickerPanPadding) / st::stickerPanSize.width()) : -1;
@@ -909,7 +894,9 @@ void FieldAutocompleteInner::onUpdateSelected(bool force) {
 		if (_down >= 0 && _sel >= 0 && _down != _sel) {
 			_down = _sel;
 			if (_down >= 0 && _down < _srows->size()) {
-				Ui::showMediaPreview(_srows->at(_down));
+				Ui::showMediaPreview(
+					(*_srows)[_down]->stickerSetOrigin(),
+					(*_srows)[_down]);
 			}
 		}
 	}
@@ -925,7 +912,9 @@ void FieldAutocompleteInner::onParentGeometryChanged() {
 
 void FieldAutocompleteInner::onPreview() {
 	if (_down >= 0 && _down < _srows->size()) {
-		Ui::showMediaPreview(_srows->at(_down));
+		Ui::showMediaPreview(
+			(*_srows)[_down]->stickerSetOrigin(),
+			(*_srows)[_down]);
 		_previewShown = true;
 	}
 }

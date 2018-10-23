@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/rate_call_box.h"
 
@@ -33,6 +20,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 namespace {
 
 constexpr auto kMaxRating = 5;
+constexpr auto kRateCallCommentLengthMax = 200;
 
 } // namespace
 
@@ -73,7 +61,7 @@ void RateCallBox::ratingChanged(int value) {
 	Expects(value > 0 && value <= kMaxRating);
 	if (!_rating) {
 		clearButtons();
-		addButton(langFactory(lng_send_button), [this] { onSend(); });
+		addButton(langFactory(lng_send_button), [this] { send(); });
 		addButton(langFactory(lng_cancel), [this] { closeBox(); });
 	}
 	_rating = value;
@@ -84,16 +72,20 @@ void RateCallBox::ratingChanged(int value) {
 	}
 	if (value < kMaxRating) {
 		if (!_comment) {
-			_comment.create(this, st::callRatingComment, langFactory(lng_call_rate_comment));
+			_comment.create(
+				this,
+				st::callRatingComment,
+				Ui::InputField::Mode::MultiLine,
+				langFactory(lng_call_rate_comment));
 			_comment->show();
-			_comment->setCtrlEnterSubmit(Ui::CtrlEnterSubmit::Both);
-			_comment->setMaxLength(MaxPhotoCaption);
+			_comment->setSubmitSettings(Ui::InputField::SubmitSettings::Both);
+			_comment->setMaxLength(kRateCallCommentLengthMax);
 			_comment->resize(width() - (st::callRatingPadding.left() + st::callRatingPadding.right()), _comment->height());
 
 			updateMaxHeight();
-			connect(_comment, SIGNAL(resized()), this, SLOT(onCommentResized()));
-			connect(_comment, SIGNAL(submitted(bool)), this, SLOT(onSend()));
-			connect(_comment, SIGNAL(cancelled()), this, SLOT(onClose()));
+			connect(_comment, &Ui::InputField::resized, [=] { commentResized(); });
+			connect(_comment, &Ui::InputField::submitted, [=] { send(); });
+			connect(_comment, &Ui::InputField::cancelled, [=] { closeBox(); });
 		}
 		_comment->setFocusFast();
 	} else if (_comment) {
@@ -110,13 +102,14 @@ void RateCallBox::setInnerFocus() {
 	}
 }
 
-void RateCallBox::onCommentResized() {
+void RateCallBox::commentResized() {
 	updateMaxHeight();
 	update();
 }
 
-void RateCallBox::onSend() {
+void RateCallBox::send() {
 	Expects(_rating > 0 && _rating <= kMaxRating);
+
 	if (_requestId) {
 		return;
 	}

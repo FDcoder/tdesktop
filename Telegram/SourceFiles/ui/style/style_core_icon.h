@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -71,7 +58,7 @@ public:
 	void paint(QPainter &p, const QPoint &pos, int outerw, const style::palette &paletteOverride) const;
 	void fill(QPainter &p, const QRect &rect, const style::palette &paletteOverride) const;
 
-	QImage instance(QColor colorOverride, DBIScale scale) const;
+	QImage instance(QColor colorOverride, int scale) const;
 
 	~MonoIcon() {
 	}
@@ -129,7 +116,7 @@ public:
 	}
 	void fill(QPainter &p, const QRect &rect, const style::palette &paletteOverride) const;
 
-	QImage instance(QColor colorOverride, DBIScale scale) const;
+	QImage instance(QColor colorOverride, int scale) const;
 
 	int width() const;
 	int height() const;
@@ -166,13 +153,13 @@ public:
 	Icon(Icon &&other) : _data(base::take(other._data)), _owner(base::take(_owner)) {
 	}
 	Icon &operator=(const Icon &other) {
-		t_assert(!_owner);
+		Assert(!_owner);
 		_data = other._data;
 		_owner = false;
 		return *this;
 	}
 	Icon &operator=(Icon &&other) {
-		t_assert(!_owner);
+		Assert(!_owner);
 		_data = base::take(other._data);
 		_owner = base::take(other._owner);
 		return *this;
@@ -218,7 +205,7 @@ public:
 		return _data->fill(p, rect, colorOverride);
 	}
 
-	QImage instance(QColor colorOverride, DBIScale scale = dbisAuto) const {
+	QImage instance(QColor colorOverride, int scale = kInterfaceScaleAuto) const {
 		return _data->instance(colorOverride, scale);
 	}
 

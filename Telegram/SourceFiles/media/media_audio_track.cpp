@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "media/media_audio_track.h"
 
@@ -54,7 +41,7 @@ ALuint CreateBuffer() {
 
 } // namespace
 
-Track::Track(gsl::not_null<Instance*> instance) : _instance(instance) {
+Track::Track(not_null<Instance*> instance) : _instance(instance) {
 	_instance->registerTrack(this);
 }
 
@@ -62,7 +49,7 @@ void Track::samplePeakEach(TimeMs peakDuration) {
 	_peakDurationMs = peakDuration;
 }
 
-void Track::fillFromData(base::byte_vector &&data) {
+void Track::fillFromData(bytes::vector &&data) {
 	FFMpegLoader loader(FileLocation(), QByteArray(), std::move(data));
 
 	auto position = qint64(0);
@@ -94,7 +81,7 @@ void Track::fillFromData(base::byte_vector &&data) {
 		auto samplesAdded = int64(0);
 		auto result = loader.readMore(buffer, samplesAdded);
 		if (samplesAdded > 0) {
-			auto sampleBytes = gsl::as_bytes(gsl::make_span(buffer));
+			auto sampleBytes = bytes::make_span(buffer);
 			_samplesCount += samplesAdded;
 			_samples.insert(_samples.end(), sampleBytes.data(), sampleBytes.data() + sampleBytes.size());
 			if (peaksCount) {
@@ -139,7 +126,7 @@ void Track::fillFromFile(const QString &filePath) {
 	if (f.open(QIODevice::ReadOnly)) {
 		auto size = f.size();
 		if (size > 0 && size <= kMaxFileSize) {
-			auto bytes = base::byte_vector(size);
+			auto bytes = bytes::vector(size);
 			if (f.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) == bytes.size()) {
 				fillFromData(std::move(bytes));
 			} else {

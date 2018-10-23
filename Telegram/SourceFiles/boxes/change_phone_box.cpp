@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/change_phone_box.h"
 
@@ -24,28 +11,46 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "styles/style_boxes.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/input_fields.h"
-#include "ui/effects/widget_fade_wrap.h"
+#include "ui/wrap/fade_wrap.h"
 #include "boxes/confirm_phone_box.h"
 #include "ui/toast/toast.h"
 #include "boxes/confirm_box.h"
 
 namespace {
 
-void createErrorLabel(QWidget *parent, object_ptr<Ui::WidgetFadeWrap<Ui::FlatLabel>> &label, const QString &text, int x, int y) {
+void createErrorLabel(
+		QWidget *parent,
+		object_ptr<Ui::FadeWrap<Ui::FlatLabel>> &label,
+		const QString &text,
+		int x,
+		int y) {
 	if (label) {
-		auto errorFadeOut = std::move(label);
-		errorFadeOut->setUpdateCallback([label = errorFadeOut.data()] {
-			if (label->isHidden() || !label->animating()) {
-				label->deleteLater();
-			}
-		});
-		errorFadeOut->hideAnimated();
+		label->hide(anim::type::normal);
+
+		auto saved = label.data();
+		auto destroy = [old = std::move(label)]() mutable {
+			old.destroyDelayed();
+		};
+
+		using namespace rpl::mappers;
+		saved->shownValue()
+			| rpl::filter(_1 == false)
+			| rpl::take(1)
+			| rpl::start_with_done(
+				std::move(destroy),
+				saved->lifetime());
 	}
 	if (!text.isEmpty()) {
-		label.create(parent, object_ptr<Ui::FlatLabel>(parent, text, Ui::FlatLabel::InitType::Simple, st::changePhoneError));
-		label->hideFast();
+		label.create(
+			parent,
+			object_ptr<Ui::FlatLabel>(
+				parent,
+				text,
+				Ui::FlatLabel::InitType::Simple,
+				st::changePhoneError));
+		label->hide(anim::type::instant);
 		label->moveToLeft(x, y);
-		label->showAnimated();
+		label->show(anim::type::normal);
 	}
 }
 
@@ -73,7 +78,7 @@ private:
 	}
 
 	object_ptr<Ui::PhoneInput> _phone = { nullptr };
-	object_ptr<Ui::WidgetFadeWrap<Ui::FlatLabel>> _error = { nullptr };
+	object_ptr<Ui::FadeWrap<Ui::FlatLabel>> _error = { nullptr };
 	mtpRequestId _requestId = 0;
 
 };
@@ -105,7 +110,7 @@ private:
 	int _codeLength = 0;
 	int _callTimeout = 0;
 	object_ptr<SentCodeField> _code = { nullptr };
-	object_ptr<Ui::WidgetFadeWrap<Ui::FlatLabel>> _error = { nullptr };
+	object_ptr<Ui::FadeWrap<Ui::FlatLabel>> _error = { nullptr };
 	object_ptr<Ui::FlatLabel> _callLabel = { nullptr };
 	mtpRequestId _requestId = 0;
 	SentCodeCall _call;
@@ -120,7 +125,7 @@ void ChangePhoneBox::EnterPhone::prepare() {
 
 	_phone->resize(st::boxWidth - 2 * st::boxPadding.left(), _phone->height());
 	_phone->moveToLeft(st::boxPadding.left(), st::boxLittleSkip);
-	connect(_phone, &Ui::PhoneInput::submitted, this, [this] { submit(); });
+	connect(_phone, &Ui::PhoneInput::submitted, [=] { submit(); });
 
 	auto description = object_ptr<Ui::FlatLabel>(this, lang(lng_change_phone_new_description), Ui::FlatLabel::InitType::Simple, st::changePhoneLabel);
 	auto errorSkip = st::boxLittleSkip + st::changePhoneError.style.font->height;
@@ -139,9 +144,9 @@ void ChangePhoneBox::EnterPhone::submit() {
 	hideError();
 
 	auto phoneNumber = _phone->getLastText().trimmed();
-	_requestId = MTP::send(MTPaccount_SendChangePhoneCode(MTP_flags(0), MTP_string(phoneNumber), MTP_bool(false)), rpcDone(base::lambda_guarded(this, [this, phoneNumber](const MTPauth_SentCode &result) {
+	_requestId = MTP::send(MTPaccount_SendChangePhoneCode(MTP_flags(0), MTP_string(phoneNumber), MTP_bool(false)), rpcDone(crl::guard(this, [this, phoneNumber](const MTPauth_SentCode &result) {
 		return sendPhoneDone(phoneNumber, result);
-	})), rpcFail(base::lambda_guarded(this, [this, phoneNumber](const RPCError &error) {
+	})), rpcFail(crl::guard(this, [this, phoneNumber](const RPCError &error) {
 		return sendPhoneFail(phoneNumber, error);
 	})));
 }
@@ -155,13 +160,13 @@ void ChangePhoneBox::EnterPhone::sendPhoneDone(const QString &phoneNumber, const
 	switch (data.vtype.type()) {
 	case mtpc_auth_sentCodeTypeApp:
 		LOG(("Error: should not be in-app code!"));
-		showError(lang(lng_server_error));
+		showError(Lang::Hard::ServerError());
 		return;
 	case mtpc_auth_sentCodeTypeSms: codeLength = data.vtype.c_auth_sentCodeTypeSms().vlength.v; break;
 	case mtpc_auth_sentCodeTypeCall: codeLength = data.vtype.c_auth_sentCodeTypeCall().vlength.v; break;
 	case mtpc_auth_sentCodeTypeFlashCall:
 		LOG(("Error: should not be flashcall!"));
-		showError(lang(lng_server_error));
+		showError(Lang::Hard::ServerError());
 		return;
 	}
 	auto phoneCodeHash = qs(data.vphone_code_hash);
@@ -169,11 +174,17 @@ void ChangePhoneBox::EnterPhone::sendPhoneDone(const QString &phoneNumber, const
 	if (data.has_next_type() && data.vnext_type.type() == mtpc_auth_codeTypeCall) {
 		callTimeout = data.has_timeout() ? data.vtimeout.v : 60;
 	}
-	Ui::show(Box<EnterCode>(phoneNumber, phoneCodeHash, codeLength, callTimeout), KeepOtherLayers);
+	Ui::show(
+		Box<EnterCode>(
+			phoneNumber,
+			phoneCodeHash,
+			codeLength,
+			callTimeout),
+		LayerOption::KeepOther);
 }
 
 bool ChangePhoneBox::EnterPhone::sendPhoneFail(const QString &phoneNumber, const RPCError &error) {
-	auto errorText = lang(lng_server_error);
+	auto errorText = Lang::Hard::ServerError();
 	if (MTP::isFloodError(error)) {
 		errorText = lang(lng_flood_error);
 	} else if (MTP::isDefaultHandledError(error)) {
@@ -202,7 +213,7 @@ ChangePhoneBox::EnterCode::EnterCode(QWidget*, const QString &phone, const QStri
 , _hash(hash)
 , _codeLength(codeLength)
 , _callTimeout(callTimeout)
-, _call(this, [this] { sendCall(); }, [this] { updateCall(); }) {
+, _call([this] { sendCall(); }, [this] { updateCall(); }) {
 }
 
 void ChangePhoneBox::EnterCode::prepare() {
@@ -214,12 +225,12 @@ void ChangePhoneBox::EnterCode::prepare() {
 
 	auto phoneValue = QString();
 	_code.create(this, st::defaultInputField, langFactory(lng_change_phone_code_title), phoneValue);
-	_code->setAutoSubmit(_codeLength, [this] { submit(); });
-	_code->setChangedCallback([this] { hideError(); });
+	_code->setAutoSubmit(_codeLength, [=] { submit(); });
+	_code->setChangedCallback([=] { hideError(); });
 
 	_code->resize(st::boxWidth - 2 * st::boxPadding.left(), _code->height());
 	_code->moveToLeft(st::boxPadding.left(), description->bottomNoMargins());
-	connect(_code, &Ui::InputField::submitted, this, [this] { submit(); });
+	connect(_code, &Ui::InputField::submitted, [=] { submit(); });
 
 	setDimensions(st::boxWidth, countHeight());
 
@@ -228,8 +239,8 @@ void ChangePhoneBox::EnterCode::prepare() {
 		updateCall();
 	}
 
-	addButton(langFactory(lng_change_phone_new_submit), [this] { submit(); });
-	addButton(langFactory(lng_cancel), [this] { closeBox(); });
+	addButton(langFactory(lng_change_phone_new_submit), [=] { submit(); });
+	addButton(langFactory(lng_cancel), [=] { closeBox(); });
 }
 
 int ChangePhoneBox::EnterCode::countHeight() {
@@ -244,19 +255,23 @@ void ChangePhoneBox::EnterCode::submit() {
 	hideError();
 
 	auto code = _code->getLastText().trimmed();
-	_requestId = MTP::send(MTPaccount_ChangePhone(MTP_string(_phone), MTP_string(_hash), MTP_string(code)), rpcDone([weak = weak(this)](const MTPUser &result) {
+	_requestId = MTP::send(MTPaccount_ChangePhone(
+		MTP_string(_phone),
+		MTP_string(_hash),
+		MTP_string(code)
+	), rpcDone([weak = make_weak(this)](const MTPUser &result) {
 		App::feedUser(result);
 		if (weak) {
 			Ui::hideLayer();
 		}
 		Ui::Toast::Show(lang(lng_change_phone_success));
-	}), rpcFail(base::lambda_guarded(this, [this](const RPCError &error) {
+	}), rpcFail(crl::guard(this, [this](const RPCError &error) {
 		return sendCodeFail(error);
 	})));
 }
 
 void ChangePhoneBox::EnterCode::sendCall() {
-	MTP::send(MTPauth_ResendCode(MTP_string(_phone), MTP_string(_hash)), rpcDone(base::lambda_guarded(this, [this] {
+	MTP::send(MTPauth_ResendCode(MTP_string(_phone), MTP_string(_hash)), rpcDone(crl::guard(this, [this] {
 		_call.callDone();
 	})));
 }
@@ -282,7 +297,7 @@ void ChangePhoneBox::EnterCode::showError(const QString &text) {
 }
 
 bool ChangePhoneBox::EnterCode::sendCodeFail(const RPCError &error) {
-	auto errorText = lang(lng_server_error);
+	auto errorText = Lang::Hard::ServerError();
 	if (MTP::isFloodError(error)) {
 		errorText = lang(lng_flood_error);
 	} else if (MTP::isDefaultHandledError(error)) {

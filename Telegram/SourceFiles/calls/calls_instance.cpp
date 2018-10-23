@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "calls/calls_instance.h"
 
@@ -29,6 +16,8 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "calls/calls_call.h"
 #include "calls/calls_panel.h"
 #include "media/media_audio_track.h"
+#include "platform/platform_specific.h"
+#include "mainwidget.h"
 
 #include "boxes/rate_call_box.h"
 namespace Calls {
@@ -40,29 +29,31 @@ constexpr auto kServerConfigUpdateTimeoutMs = 24 * 3600 * TimeMs(1000);
 
 Instance::Instance() = default;
 
-void Instance::startOutgoingCall(gsl::not_null<UserData*> user) {
+void Instance::startOutgoingCall(not_null<UserData*> user) {
 	if (alreadyInCall()) { // Already in a call.
 		_currentCallPanel->showAndActivate();
 		return;
 	}
 	if (user->callsStatus() == UserData::CallsStatus::Private) {
 		// Request full user once more to refresh the setting in case it was changed.
-		AuthSession::Current().api().requestFullPeer(user);
+		Auth().api().requestFullPeer(user);
 		Ui::show(Box<InformBox>(lng_call_error_not_available(lt_user, App::peerName(user))));
 		return;
 	}
-	createCall(user, Call::Type::Outgoing);
+	requestMicrophonePermissionOrFail(crl::guard(this, [=] {
+		createCall(user, Call::Type::Outgoing);
+	}));
 }
 
-void Instance::callFinished(gsl::not_null<Call*> call) {
+void Instance::callFinished(not_null<Call*> call) {
 	destroyCall(call);
 }
 
-void Instance::callFailed(gsl::not_null<Call*> call) {
+void Instance::callFailed(not_null<Call*> call) {
 	destroyCall(call);
 }
 
-void Instance::callRedial(gsl::not_null<Call*> call) {
+void Instance::callRedial(not_null<Call*> call) {
 	if (_currentCall.get() == call) {
 		refreshDhConfig();
 	}
@@ -73,7 +64,8 @@ void Instance::playSound(Sound sound) {
 	case Sound::Busy: {
 		if (!_callBusyTrack) {
 			_callBusyTrack = Media::Audio::Current().createTrack();
-			_callBusyTrack->fillFromFile(AuthSession::Current().data().getSoundPath(qsl("call_busy")));
+			_callBusyTrack->fillFromFile(
+				Auth().settings().getSoundPath(qsl("call_busy")));
 		}
 		_callBusyTrack->playOnce();
 	} break;
@@ -81,7 +73,8 @@ void Instance::playSound(Sound sound) {
 	case Sound::Ended: {
 		if (!_callEndedTrack) {
 			_callEndedTrack = Media::Audio::Current().createTrack();
-			_callEndedTrack->fillFromFile(AuthSession::Current().data().getSoundPath(qsl("call_end")));
+			_callEndedTrack->fillFromFile(
+				Auth().settings().getSoundPath(qsl("call_end")));
 		}
 		_callEndedTrack->playOnce();
 	} break;
@@ -89,14 +82,15 @@ void Instance::playSound(Sound sound) {
 	case Sound::Connecting: {
 		if (!_callConnectingTrack) {
 			_callConnectingTrack = Media::Audio::Current().createTrack();
-			_callConnectingTrack->fillFromFile(AuthSession::Current().data().getSoundPath(qsl("call_connect")));
+			_callConnectingTrack->fillFromFile(
+				Auth().settings().getSoundPath(qsl("call_connect")));
 		}
 		_callConnectingTrack->playOnce();
 	} break;
 	}
 }
 
-void Instance::destroyCall(gsl::not_null<Call*> call) {
+void Instance::destroyCall(not_null<Call*> call) {
 	if (_currentCall.get() == call) {
 		destroyCurrentPanel();
 		_currentCall.reset();
@@ -117,7 +111,7 @@ void Instance::destroyCurrentPanel() {
 	_pendingPanels.back()->hideAndDestroy(); // Always queues the destruction.
 }
 
-void Instance::createCall(gsl::not_null<UserData*> user, Call::Type type) {
+void Instance::createCall(not_null<UserData*> user, Call::Type type) {
 	auto call = std::make_unique<Call>(getCallDelegate(), user, type);;
 	if (_currentCall) {
 		_currentCallPanel->replaceCall(call.get());
@@ -134,24 +128,28 @@ void Instance::createCall(gsl::not_null<UserData*> user, Call::Type type) {
 
 void Instance::refreshDhConfig() {
 	Expects(_currentCall != nullptr);
-	request(MTPmessages_GetDhConfig(MTP_int(_dhConfig.version), MTP_int(Call::kRandomPowerSize))).done([this, call = base::weak_unique_ptr<Call>(_currentCall)](const MTPmessages_DhConfig &result) {
-		auto random = base::const_byte_span();
+	request(MTPmessages_GetDhConfig(
+		MTP_int(_dhConfig.version),
+		MTP_int(MTP::ModExpFirst::kRandomPowerSize)
+	)).done([this, call = base::make_weak(_currentCall)](
+			const MTPmessages_DhConfig &result) {
+		auto random = bytes::const_span();
 		switch (result.type()) {
 		case mtpc_messages_dhConfig: {
 			auto &config = result.c_messages_dhConfig();
-			if (!MTP::IsPrimeAndGood(bytesFromMTP(config.vp), config.vg.v)) {
+			if (!MTP::IsPrimeAndGood(bytes::make_span(config.vp.v), config.vg.v)) {
 				LOG(("API Error: bad p/g received in dhConfig."));
 				callFailed(call.get());
 				return;
 			}
 			_dhConfig.g = config.vg.v;
-			_dhConfig.p = byteVectorFromMTP(config.vp);
-			random = bytesFromMTP(config.vrandom);
+			_dhConfig.p = bytes::make_vector(config.vp.v);
+			random = bytes::make_span(config.vrandom.v);
 		} break;
 
 		case mtpc_messages_dhConfigNotModified: {
 			auto &config = result.c_messages_dhConfigNotModified();
-			random = bytesFromMTP(config.vrandom);
+			random = bytes::make_span(config.vrandom.v);
 			if (!_dhConfig.g || _dhConfig.p.empty()) {
 				LOG(("API Error: dhConfigNotModified on zero version."));
 				callFailed(call.get());
@@ -162,7 +160,7 @@ void Instance::refreshDhConfig() {
 		default: Unexpected("Type in messages.getDhConfig");
 		}
 
-		if (random.size() != Call::kRandomPowerSize) {
+		if (random.size() != MTP::ModExpFirst::kRandomPowerSize) {
 			LOG(("API Error: dhConfig random bytes wrong size: %1").arg(random.size()));
 			callFailed(call.get());
 			return;
@@ -170,7 +168,8 @@ void Instance::refreshDhConfig() {
 		if (call) {
 			call->start(random);
 		}
-	}).fail([this, call = base::weak_unique_ptr<Call>(_currentCall)](const RPCError &error) {
+	}).fail([this, call = base::make_weak(_currentCall)](
+			const RPCError &error) {
 		if (!call) {
 			DEBUG_LOG(("API Warning: call was destroyed before got dhConfig."));
 			return;
@@ -191,7 +190,7 @@ void Instance::refreshServerConfig() {
 		_lastServerConfigUpdateTime = getms(true);
 
 		auto configUpdate = std::map<std::string, std::string>();
-		auto bytes = bytesFromMTP(result.c_dataJSON().vdata);
+		auto bytes = bytes::make_span(result.c_dataJSON().vdata.v);
 		auto error = QJsonParseError { 0, QJsonParseError::NoError };
 		auto document = QJsonDocument::fromJson(QByteArray::fromRawData(reinterpret_cast<const char*>(bytes.data()), bytes.size()), &error);
 		if (error.error != QJsonParseError::NoError) {
@@ -246,7 +245,7 @@ void Instance::handleUpdate(const MTPDupdatePhoneCall& update) {
 	handleCallUpdate(update.vphone_call);
 }
 
-void Instance::showInfoPanel(gsl::not_null<Call*> call) {
+void Instance::showInfoPanel(not_null<Call*> call) {
 	if (_currentCall.get() == call) {
 		_currentCallPanel->showAndActivate();
 	}
@@ -290,6 +289,31 @@ bool Instance::alreadyInCall() {
 	return (_currentCall && _currentCall->state() != Call::State::Busy);
 }
 
+void Instance::requestMicrophonePermissionOrFail(Fn<void()> onSuccess) {
+	Platform::PermissionStatus status=Platform::GetPermissionStatus(Platform::PermissionType::Microphone);
+	if (status==Platform::PermissionStatus::Granted) {
+		onSuccess();
+	} else if(status==Platform::PermissionStatus::CanRequest) {
+		Platform::RequestPermission(Platform::PermissionType::Microphone, crl::guard(this, [=](Platform::PermissionStatus status) {
+			if (status==Platform::PermissionStatus::Granted) {
+				crl::on_main(onSuccess);
+			} else {
+				if (_currentCall) {
+					_currentCall->hangup();
+				}
+			}
+		}));
+	} else {
+		if (alreadyInCall()) {
+			_currentCall->hangup();
+		}
+		Ui::show(Box<ConfirmBox>(lang(lng_no_mic_permission), lang(lng_menu_settings), crl::guard(this, [] {
+			Platform::OpenSystemSettingsForPermission(Platform::PermissionType::Microphone);
+			Ui::hideLayer();
+		})));
+	}
+}
+
 Instance::~Instance() {
 	for (auto panel : _pendingPanels) {
 		if (panel) {
@@ -299,7 +323,7 @@ Instance::~Instance() {
 }
 
 Instance &Current() {
-	return AuthSession::Current().calls();
+	return Auth().calls();
 }
 
 } // namespace Calls

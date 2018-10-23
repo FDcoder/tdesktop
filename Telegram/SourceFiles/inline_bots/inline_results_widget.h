@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
@@ -63,7 +50,7 @@ class Inner : public TWidget, public Context, private base::Subscriber {
 	Q_OBJECT
 
 public:
-	Inner(QWidget *parent, gsl::not_null<Window::Controller*> controller);
+	Inner(QWidget *parent, not_null<Window::Controller*> controller);
 
 	void hideFinish(bool completely);
 
@@ -74,22 +61,26 @@ public:
 	void hideInlineRowsPanel();
 	void clearInlineRowsPanel();
 
-	void setVisibleTopBottom(int visibleTop, int visibleBottom) override;
 	void preloadImages();
 
 	void inlineItemLayoutChanged(const ItemBase *layout) override;
 	void inlineItemRepaint(const ItemBase *layout) override;
 	bool inlineItemVisible(const ItemBase *layout) override;
+	Data::FileOrigin inlineItemFileOrigin() override;
 
 	int countHeight();
 
-	void setResultSelectedCallback(base::lambda<void(Result *result, UserData *bot)> callback) {
+	void setResultSelectedCallback(Fn<void(Result *result, UserData *bot)> callback) {
 		_resultSelectedCallback = std::move(callback);
 	}
 
 	~Inner();
 
 protected:
+	void visibleTopBottomUpdated(
+		int visibleTop,
+		int visibleBottom) override;
+
 	void mousePressEvent(QMouseEvent *e) override;
 	void mouseReleaseEvent(QMouseEvent *e) override;
 	void mouseMoveEvent(QMouseEvent *e) override;
@@ -118,7 +109,7 @@ private:
 
 	void refreshSwitchPmButton(const CacheEntry *entry);
 
-	gsl::not_null<Window::Controller*> _controller;
+	not_null<Window::Controller*> _controller;
 
 	int _visibleTop = 0;
 	int _visibleBottom = 0;
@@ -160,7 +151,7 @@ private:
 	QTimer _previewTimer;
 	bool _previewShown = false;
 
-	base::lambda<void(Result *result, UserData *bot)> _resultSelectedCallback;
+	Fn<void(Result *result, UserData *bot)> _resultSelectedCallback;
 
 };
 
@@ -170,7 +161,7 @@ class Widget : public TWidget, private MTP::Sender {
 	Q_OBJECT
 
 public:
-	Widget(QWidget *parent, gsl::not_null<Window::Controller*> controller);
+	Widget(QWidget *parent, not_null<Window::Controller*> controller);
 
 	void moveBottom(int bottom);
 
@@ -187,7 +178,7 @@ public:
 	void showAnimated();
 	void hideAnimated();
 
-	void setResultSelectedCallback(base::lambda<void(Result *result, UserData *bot)> callback) {
+	void setResultSelectedCallback(Fn<void(Result *result, UserData *bot)> callback) {
 		_inner->setResultSelectedCallback(std::move(callback));
 	}
 
@@ -240,7 +231,7 @@ private:
 	bool refreshInlineRows(int *added = nullptr);
 	void inlineResultsDone(const MTPmessages_BotResults &result);
 
-	gsl::not_null<Window::Controller*> _controller;
+	not_null<Window::Controller*> _controller;
 
 	int _contentMaxHeight = 0;
 	int _contentHeight = 0;

@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/countryinput.h"
 
@@ -25,7 +12,6 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/multi_select.h"
 #include "ui/effects/ripple_animation.h"
-#include "boxes/contacts_box.h"
 #include "countries.h"
 #include "styles/style_boxes.h"
 #include "styles/style_intro.h"
@@ -176,11 +162,12 @@ void CountryInput::leaveEventHook(QEvent *e) {
 
 void CountryInput::onChooseCode(const QString &code) {
 	Ui::hideLayer();
+	_chosenIso = QString();
 	if (code.length()) {
 		CountriesByCode::const_iterator i = _countriesByCode.constFind(code);
 		if (i != _countriesByCode.cend()) {
 			const CountryInfo *info = *i;
-			lastValidISO = info->iso2;
+			_chosenIso = lastValidISO = info->iso2;
 			setText(QString::fromUtf8(info->name));
 		} else {
 			setText(lang(lng_bad_country_code));
@@ -197,8 +184,9 @@ bool CountryInput::onChooseCountry(const QString &iso) {
 	CountriesByISO2::const_iterator i = _countriesByISO2.constFind(iso);
 	const CountryInfo *info = (i == _countriesByISO2.cend()) ? 0 : (*i);
 
+	_chosenIso = QString();
 	if (info) {
-		lastValidISO = info->iso2;
+		_chosenIso = lastValidISO = info->iso2;
 		setText(QString::fromUtf8(info->name));
 		emit codeChanged(info->code);
 		update();
@@ -215,14 +203,44 @@ CountrySelectBox::CountrySelectBox(QWidget*)
 : _select(this, st::contactsMultiSelect, langFactory(lng_country_ph)) {
 }
 
+CountrySelectBox::CountrySelectBox(QWidget*, const QString &iso, Type type)
+: _type(type)
+, _select(this, st::contactsMultiSelect, langFactory(lng_country_ph)) {
+	lastValidISO = iso;
+}
+
+QString CountrySelectBox::NameByISO(const QString &iso) {
+	if (_countriesByISO2.isEmpty()) {
+		initCountries();
+	}
+	const auto i = _countriesByISO2.constFind(iso);
+	return (i == _countriesByISO2.cend())
+		? QString()
+		: QString::fromUtf8((*i)->name);
+}
+
+QString CountrySelectBox::ISOByPhone(const QString &phone) {
+	if (_countriesByCode.isEmpty()) {
+		initCountries();
+	}
+	const auto code = findValidCode(phone);
+	const auto i = _countriesByCode.find(code);
+	return (i == _countriesByCode.cend())
+		? QString()
+		: QString::fromUtf8((*i)->iso2);
+}
+
 void CountrySelectBox::prepare() {
 	setTitle(langFactory(lng_country_select));
 
 	_select->resizeToWidth(st::boxWidth);
 	_select->setQueryChangedCallback([this](const QString &query) { onFilterUpdate(query); });
-	_select->setSubmittedCallback([this](bool) { onSubmit(); });
+	_select->setSubmittedCallback([this](Qt::KeyboardModifiers) { onSubmit(); });
 
-	_inner = setInnerWidget(object_ptr<Inner>(this), st::countriesScroll, _select->height());
+	_inner = setInnerWidget(
+		object_ptr<Inner>(this, _type),
+		st::countriesScroll,
+		_select->height());
 
 	addButton(langFactory(lng_close), [this] { closeBox(); });
 
@@ -268,9 +286,15 @@ void CountrySelectBox::setInnerFocus() {
 	_select->setInnerFocus();
 }
 
-CountrySelectBox::Inner::Inner(QWidget *parent) : TWidget(parent)
+CountrySelectBox::Inner::Inner(QWidget *parent, Type type)
+: TWidget(parent)
+, _type(type)
 , _rowHeight(st::countryRowHeight) {
 	setAttribute(Qt::WA_OpaquePaintEvent);
+
+	if (countriesNames.isEmpty()) {
+		initCountries();
+	}
 
 	CountriesByISO2::const_iterator l = _countriesByISO2.constFind(lastValidISO);
 	bool seenLastValid = false;
@@ -290,17 +314,17 @@ CountrySelectBox::Inner::Inner(QWidget *parent) : TWidget(parent)
 			countriesAll.push_back(ins);
 		}
 
-		QStringList namesList = QString::fromUtf8(ins->name).toLower().split(QRegularExpression("[\\s\\-]"), QString::SkipEmptyParts);
-		CountryNames &names(countriesNames[i]);
+		auto namesList = QString::fromUtf8(ins->name).toLower().split(QRegularExpression("[\\s\\-]"), QString::SkipEmptyParts);
+		auto &names = countriesNames[i];
 		int l = namesList.size();
 		names.resize(0);
 		names.reserve(l);
 		for (int j = 0, l = namesList.size(); j < l; ++j) {
-			QString name = namesList[j].trimmed();
+			auto name = namesList[j].trimmed();
 			if (!name.length()) continue;
 
-			QChar ch = name[0];
-			CountriesIds &v(countriesByLetter[ch]);
+			auto ch = name[0];
+			auto &v = countriesByLetter[ch];
 			if (v.isEmpty() || v.back() != i) {
 				v.push_back(i);
 			}
@@ -353,9 +377,11 @@ void CountrySelectBox::Inner::paintEvent(QPaintEvent *e) {
 			p.setPen(st::countryRowNameFg);
 			p.drawTextLeft(st::countryRowPadding.left(), y + st::countryRowPadding.top(), width(), name);
 
-			p.setFont(st::countryRowCodeFont);
-			p.setPen(selected ? st::countryRowCodeFgOver : st::countryRowCodeFg);
-			p.drawTextLeft(st::countryRowPadding.left() + nameWidth + st::countryRowPadding.right(), y + st::countryRowPadding.top(), width(), code);
+			if (_type == Type::Phones) {
+				p.setFont(st::countryRowCodeFont);
+				p.setPen(selected ? st::countryRowCodeFgOver : st::countryRowCodeFg);
+				p.drawTextLeft(st::countryRowPadding.left() + nameWidth + st::countryRowPadding.right(), y + st::countryRowPadding.top(), width(), code);
+			}
 		}
 	} else {
 		p.fillRect(r, st::boxBg);
@@ -392,7 +418,7 @@ void CountrySelectBox::Inner::mousePressEvent(QMouseEvent *e) {
 		if (_ripples.size() <= _pressed) {
 			_ripples.reserve(_pressed + 1);
 			while (_ripples.size() <= _pressed) {
-				_ripples.push_back(std::unique_ptr<Ui::RippleAnimation>());
+				_ripples.push_back(nullptr);
 			}
 		}
 		if (!_ripples[_pressed]) {

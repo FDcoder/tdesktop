@@ -1,19 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/linux/specific_linux.h"
 
@@ -25,6 +15,8 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "platform/linux/file_utilities_linux.h"
 #include "platform/platform_notifications_manager.h"
 #include "storage/localstorage.h"
+#include "core/crash_reports.h"
+#include "core/update_checker.h"
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -39,6 +31,45 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 
 using namespace Platform;
 using Platform::File::internal::EscapeShell;
+
+namespace {
+
+bool _psRunCommand(const QByteArray &command) {
+        auto result = system(command.constData());
+        if (result) {
+                DEBUG_LOG(("App Error: command failed, code: %1, command (in utf8): %2").arg(result).arg(command.constData()));
+                return false;
+        }
+        DEBUG_LOG(("App Info: command succeeded, command (in utf8): %1").arg(command.constData()));
+        return true;
+}
+
+} // namespace
+
+namespace Platform {
+
+bool IsApplicationActive() {
+	return static_cast<QApplication*>(QApplication::instance())->activeWindow() != nullptr;
+}
+
+QString CurrentExecutablePath(int argc, char *argv[]) {
+	constexpr auto kMaxPath = 1024;
+	char result[kMaxPath] = { 0 };
+	auto count = readlink("/proc/self/exe", result, kMaxPath);
+	if (count > 0) {
+		auto filename = QFile::decodeName(result);
+		auto deletedPostfix = qstr(" (deleted)");
+		if (filename.endsWith(deletedPostfix) && !QFileInfo(filename).exists()) {
+			filename.chop(deletedPostfix.size());
+		}
+		return filename;
+	}
+
+	// Fallback to the first command line argument.
+	return argc ? QFile::decodeName(argv[0]) : QString();
+}
+
+} // namespace Platform
 
 namespace {
 
@@ -68,11 +99,9 @@ QRect psDesktopRect() {
 }
 
 void psShowOverAll(QWidget *w, bool canFocus) {
-	w->show();
 }
 
 void psBringToBack(QWidget *w) {
-	w->hide();
 }
 
 QAbstractNativeEventFilter *psNativeEventFilter() {
@@ -104,7 +133,7 @@ QString demanglestr(const QString &mangled) {
 
 QStringList addr2linestr(uint64 *addresses, int count) {
 	QStringList result;
-	if (!count) return result;
+	if (!count || cExeName().isEmpty()) return result;
 
 	result.reserve(count);
 	QByteArray cmd = "addr2line -e " + EscapeShell(QFile::encodeName(cExeDir() + cExeName()));
@@ -141,81 +170,6 @@ QStringList addr2linestr(uint64 *addresses, int count) {
 			++j;
 		} else {
 			result.push_back(QString());
-		}
-	}
-	return result;
-}
-
-QString psPrepareCrashDump(const QByteArray &crashdump, QString dumpfile) {
-	QString initial = QString::fromUtf8(crashdump), result;
-	QStringList lines = initial.split('\n');
-	result.reserve(initial.size());
-	int32 i = 0, l = lines.size();
-
-	while (i < l) {
-		uint64 addresses[1024] = { 0 };
-		for (; i < l; ++i) {
-			result.append(lines.at(i)).append('\n');
-			QString line = lines.at(i).trimmed();
-			if (line == qstr("Backtrace:")) {
-				++i;
-				break;
-			}
-		}
-
-		int32 start = i;
-		for (; i < l; ++i) {
-			QString line = lines.at(i).trimmed();
-			if (line.isEmpty()) break;
-
-			QRegularExpressionMatch m1 = QRegularExpression(qsl("^(.+)\\(([^+]+)\\+([^\\)]+)\\)\\[(.+)\\]$")).match(line);
-			QRegularExpressionMatch m2 = QRegularExpression(qsl("^(.+)\\[(.+)\\]$")).match(line);
-			QString addrstr = m1.hasMatch() ? m1.captured(4) : (m2.hasMatch() ? m2.captured(2) : QString());
-			if (!addrstr.isEmpty()) {
-				uint64 addr = addrstr.startsWith(qstr("0x")) ? addrstr.mid(2).toULongLong(0, 16) : addrstr.toULongLong();
-				if (addr > 1) {
-					addresses[i - start] = addr;
-				}
-			}
-		}
-
-		QStringList addr2line = addr2linestr(addresses, i - start);
-		for (i = start; i < l; ++i) {
-			QString line = lines.at(i).trimmed();
-			if (line.isEmpty()) break;
-
-			result.append(qsl("\n%1. ").arg(i - start));
-			if (line.startsWith(qstr("ERROR: "))) {
-				result.append(line).append('\n');
-				continue;
-			}
-			if (line == qstr("[0x1]")) {
-				result.append(qsl("(0x1 separator)\n"));
-				continue;
-			}
-
-			QRegularExpressionMatch m1 = QRegularExpression(qsl("^(.+)\\(([^+]*)\\+([^\\)]+)\\)(.+)$")).match(line);
-			QRegularExpressionMatch m2 = QRegularExpression(qsl("^(.+)\\[(.+)\\]$")).match(line);
-			if (!m1.hasMatch() && !m2.hasMatch()) {
-				result.append(qstr("BAD LINE: ")).append(line).append('\n');
-				continue;
-			}
-
-			if (m1.hasMatch()) {
-				result.append(demanglestr(m1.captured(2))).append(qsl(" + ")).append(m1.captured(3)).append(qsl(" [")).append(m1.captured(1)).append(qsl("] "));
-				if (!addr2line.at(i - start).isEmpty() && addr2line.at(i - start) != qsl("??:0")) {
-					result.append(qsl(" (")).append(addr2line.at(i - start)).append(qsl(")\n"));
-				} else {
-					result.append(m1.captured(4)).append(qsl(" (demangled)")).append('\n');
-				}
-			} else {
-				result.append('[').append(m2.captured(1)).append(']');
-				if (!addr2line.at(i - start).isEmpty() && addr2line.at(i - start) != qsl("??:0")) {
-					result.append(qsl(" (")).append(addr2line.at(i - start)).append(qsl(")\n"));
-				} else {
-					result.append(' ').append(m2.captured(2)).append('\n');
-				}
-			}
 		}
 	}
 	return result;
@@ -281,6 +235,11 @@ void psActivateProcess(uint64 pid) {
 namespace {
 
 QString getHomeDir() {
+	auto home = QDir::homePath();
+
+	if (home != QDir::rootPath())
+		return home + '/';
+
 	struct passwd *pw = getpwuid(getuid());
 	return (pw && pw->pw_dir && strlen(pw->pw_dir)) ? (QFile::decodeName(pw->pw_dir) + '/') : QString();
 }
@@ -304,34 +263,6 @@ QString psAppDataPath() {
 
 QString psDownloadPath() {
 	return QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + '/' + str_const_toString(AppName) + '/';
-}
-
-QString psCurrentExeDirectory(int argc, char *argv[]) {
-	QString first = argc ? QFile::decodeName(argv[0]) : QString();
-	if (!first.isEmpty()) {
-		QFileInfo info(first);
-		if (info.isSymLink()) {
-			info = info.symLinkTarget();
-		}
-		if (info.exists()) {
-			return QDir(info.absolutePath()).absolutePath() + '/';
-		}
-	}
-	return QString();
-}
-
-QString psCurrentExeName(int argc, char *argv[]) {
-	QString first = argc ? QFile::decodeName(argv[0]) : QString();
-	if (!first.isEmpty()) {
-		QFileInfo info(first);
-		if (info.isSymLink()) {
-			info = info.symLinkTarget();
-		}
-		if (info.exists()) {
-			return info.fileName();
-		}
-	}
-	return QString();
 }
 
 void psDoCleanup() {
@@ -400,38 +331,12 @@ QString SystemLanguage() {
 	return QString();
 }
 
-namespace ThirdParty {
-
-void start() {
-	Libs::start();
-	MainWindow::LibsLoaded();
-}
-
-void finish() {
-}
-
-} // namespace ThirdParty
-
-} // namespace Platform
-
-namespace {
-
-bool _psRunCommand(const QByteArray &command) {
-	auto result = system(command.constData());
-	if (result) {
-		DEBUG_LOG(("App Error: command failed, code: %1, command (in utf8): %2").arg(result).arg(command.constData()));
-		return false;
-	}
-	DEBUG_LOG(("App Info: command succeeded, command (in utf8): %1").arg(command.constData()));
-	return true;
-}
-
-} // namespace
-
-void psRegisterCustomScheme() {
+void RegisterCustomScheme() {
 #ifndef TDESKTOP_DISABLE_REGISTER_CUSTOM_SCHEME
 	auto home = getHomeDir();
-	if (home.isEmpty() || cBetaVersion()) return; // don't update desktop file for beta version
+	if (home.isEmpty() || cAlphaVersion() || cExeName().isEmpty()) return; // don't update desktop file for alpha version
+	if (Core::UpdaterDisabled())
+		return;
 
 #ifndef TDESKTOP_DISABLE_DESKTOP_FILE_GENERATION
 	DEBUG_LOG(("App Info: placing .desktop file"));
@@ -464,7 +369,7 @@ void psRegisterCustomScheme() {
 			s << "[Desktop Entry]\n";
 			s << "Version=1.0\n";
 			s << "Name=Telegram Desktop\n";
-			s << "Comment=Official desktop version of Telegram messaging app\n";
+			s << "Comment=Official desktop application for the Telegram messaging service\n";
 			s << "TryExec=" << EscapeShell(QFile::encodeName(cExeDir() + cExeName())) << "\n";
 			s << "Exec=" << EscapeShell(QFile::encodeName(cExeDir() + cExeName())) << " -- %u\n";
 			s << "Icon=telegram\n";
@@ -528,89 +433,33 @@ void psRegisterCustomScheme() {
 #endif // !TDESKTOP_DISABLE_REGISTER_CUSTOM_SCHEME
 }
 
+PermissionStatus GetPermissionStatus(PermissionType type){
+	return PermissionStatus::Granted;
+}
+
+void RequestPermission(PermissionType type, Fn<void(PermissionStatus)> resultCallback){
+	resultCallback(PermissionStatus::Granted);
+}
+
+void OpenSystemSettingsForPermission(PermissionType type){
+}
+
+namespace ThirdParty {
+
+void start() {
+	Libs::start();
+	MainWindow::LibsLoaded();
+}
+
+void finish() {
+}
+
+} // namespace ThirdParty
+
+} // namespace Platform
+
 void psNewVersion() {
-	psRegisterCustomScheme();
-}
-
-bool _execUpdater(bool update = true, const QString &crashreport = QString()) {
-	static const int MaxLen = 65536, MaxArgsCount = 128;
-
-	char path[MaxLen] = {0};
-	QByteArray data(QFile::encodeName(cExeDir() + (update ? "Updater" : gExeName)));
-	memcpy(path, data.constData(), data.size());
-
-	char *args[MaxArgsCount] = { 0 };
-	char p_noupdate[] = "-noupdate";
-	char p_autostart[] = "-autostart";
-	char p_debug[] = "-debug";
-	char p_tosettings[] = "-tosettings";
-	char p_key[] = "-key";
-	char p_datafile[MaxLen] = { 0 };
-	char p_path[] = "-workpath";
-	char p_pathbuf[MaxLen] = { 0 };
-	char p_startintray[] = "-startintray";
-	char p_testmode[] = "-testmode";
-	char p_crashreport[] = "-crashreport";
-	char p_crashreportbuf[MaxLen] = { 0 };
-	char p_exe[] = "-exename";
-	char p_exebuf[MaxLen] = { 0 };
-	int argIndex = 0;
-	args[argIndex++] = path;
-	if (!update) {
-		args[argIndex++] = p_noupdate;
-		args[argIndex++] = p_tosettings;
-	}
-	if (cLaunchMode() == LaunchModeAutoStart) args[argIndex++] = p_autostart;
-	if (cDebug()) args[argIndex++] = p_debug;
-	if (cStartInTray()) args[argIndex++] = p_startintray;
-	if (cTestMode()) args[argIndex++] = p_testmode;
-	if (cDataFile() != qsl("data")) {
-		QByteArray dataf = QFile::encodeName(cDataFile());
-		if (dataf.size() < MaxLen) {
-			memcpy(p_datafile, dataf.constData(), dataf.size());
-			args[argIndex++] = p_key;
-			args[argIndex++] = p_datafile;
-		}
-	}
-	QByteArray pathf = QFile::encodeName(cWorkingDir());
-	if (pathf.size() < MaxLen) {
-		memcpy(p_pathbuf, pathf.constData(), pathf.size());
-		args[argIndex++] = p_path;
-		args[argIndex++] = p_pathbuf;
-	}
-	if (!crashreport.isEmpty()) {
-		QByteArray crashreportf = QFile::encodeName(crashreport);
-		if (crashreportf.size() < MaxLen) {
-			memcpy(p_crashreportbuf, crashreportf.constData(), crashreportf.size());
-			args[argIndex++] = p_crashreport;
-			args[argIndex++] = p_crashreportbuf;
-		}
-	}
-	QByteArray exef = QFile::encodeName(cExeName());
-	if (exef.size() > 0 && exef.size() < MaxLen) {
-		memcpy(p_exebuf, exef.constData(), exef.size());
-		args[argIndex++] = p_exe;
-		args[argIndex++] = p_exebuf;
-	}
-
-	Logs::closeMain();
-	SignalHandlers::finish();
-	pid_t pid = fork();
-	switch (pid) {
-	case -1: return false;
-	case 0: execv(path, args); return false;
-	}
-	return true;
-}
-
-void psExecUpdater() {
-	if (!_execUpdater()) {
-		psDeleteDir(cWorkingDir() + qsl("tupdates/temp"));
-	}
-}
-
-void psExecTelegram(const QString &crashreport) {
-	_execUpdater(false, crashreport);
+	Platform::RegisterCustomScheme();
 }
 
 bool psShowOpenWithMenu(int x, int y, const QString &file) {

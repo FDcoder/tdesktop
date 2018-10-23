@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "codegen/emoji/generator.h"
 
@@ -47,8 +34,8 @@ constexpr auto kErrorCantWritePath = 851;
 
 constexpr auto kOriginalBits = 12;
 constexpr auto kIdSizeBits = 6;
-constexpr auto kColumnBits = 6;
-constexpr auto kRowBits = 6;
+constexpr auto kColumnBits = 5;
+constexpr auto kRowBits = 7;
 
 common::ProjectInfo Project = {
 	"codegen_emoji",
@@ -211,30 +198,40 @@ int Generator::generate() {
 	return 0;
 }
 
-constexpr auto kVariantsCount = 5;
-constexpr auto kEmojiInRow = 40;
+constexpr auto kEmojiInRow = 32;
+constexpr auto kEmojiRowsInFile = 16;
+constexpr auto kEmojiQuality = 99;
+constexpr auto kEmojiSize = 72;
+constexpr auto kEmojiFontSize = 72;
+constexpr auto kEmojiDelta = 67;
+constexpr auto kScaleFromLarge = true;
 
 #ifdef SUPPORT_IMAGE_GENERATION
-QImage Generator::generateImage(int variantIndex) {
-	constexpr int kEmojiSizes[kVariantsCount + 1] = { 18, 22, 27, 36, 45, 180 };
-	constexpr bool kBadSizes[kVariantsCount] = { true, true, false, false, false };
-	constexpr int kEmojiFontSizes[kVariantsCount + 1] = { 14, 20, 27, 36, 45, 180 };
-	constexpr int kEmojiDeltas[kVariantsCount + 1] = { 15, 20, 25, 34, 42, 167 };
+QImage Generator::generateImage(int imageIndex) {
+	constexpr auto kLargeEmojiSize = 180;
+	constexpr auto kLargeEmojiFontSize = 180;
+	constexpr auto kLargeEmojiDelta = 167;
 
-	auto emojiCount = data_.list.size();
+	auto emojiCount = int(data_.list.size());
 	auto columnsCount = kEmojiInRow;
-	auto rowsCount = (emojiCount / columnsCount) + ((emojiCount % columnsCount) ? 1 : 0);
+	auto fullRowsCount = (emojiCount / columnsCount) + ((emojiCount % columnsCount) ? 1 : 0);
+	auto imagesCount = (fullRowsCount / kEmojiRowsInFile) + ((fullRowsCount % kEmojiRowsInFile) ? 1 : 0);
 
-	auto emojiSize = kEmojiSizes[variantIndex];
-	auto isBad = kBadSizes[variantIndex];
-	auto sourceSize = (isBad ? kEmojiSizes[kVariantsCount] : emojiSize);
+	auto sourceSize = kScaleFromLarge ? kLargeEmojiSize : kEmojiSize;
 
 	auto font = QGuiApplication::font();
 	font.setFamily(QStringLiteral("Apple Color Emoji"));
-	font.setPixelSize(kEmojiFontSizes[isBad ? kVariantsCount : variantIndex]);
+	font.setPixelSize(kScaleFromLarge ? kLargeEmojiFontSize : kEmojiFontSize);
 
 	auto singleSize = 4 + sourceSize;
-	auto emojiImage = QImage(columnsCount * emojiSize, rowsCount * emojiSize, QImage::Format_ARGB32);
+	const auto inFileShift = (imageIndex * kEmojiInRow * kEmojiRowsInFile);
+	if (inFileShift >= emojiCount) {
+		return QImage();
+	}
+	const auto maxInFile = emojiCount - inFileShift;
+	const auto inFileCount = std::min(maxInFile, kEmojiInRow * kEmojiRowsInFile);
+	auto rowsCount = (inFileCount / columnsCount) + ((inFileCount % columnsCount) ? 1 : 0);
+	auto emojiImage = QImage(columnsCount * kEmojiSize, rowsCount * kEmojiSize, QImage::Format_ARGB32);
 	emojiImage.fill(Qt::transparent);
 	auto singleImage = QImage(singleSize, singleSize, QImage::Format_ARGB32);
 	{
@@ -243,22 +240,24 @@ QImage Generator::generateImage(int variantIndex) {
 
 		auto column = 0;
 		auto row = 0;
-		for (auto &emoji : data_.list) {
+		for (auto i = 0; i != inFileCount; ++i) {
+			auto &emoji = data_.list[inFileShift + i];
 			{
 				singleImage.fill(Qt::transparent);
 
 				QPainter q(&singleImage);
 				q.setPen(QColor(0, 0, 0, 255));
 				q.setFont(font);
-				q.drawText(2, 2 + kEmojiDeltas[isBad ? kVariantsCount : variantIndex], emoji.id);
+				const auto delta = kScaleFromLarge ? kLargeEmojiDelta : kEmojiDelta;
+				q.drawText(2, 2 + delta, emoji.id);
 			}
 			auto sourceRect = computeSourceRect(singleImage);
 			if (sourceRect.isEmpty()) {
 				return QImage();
 			}
-			auto targetRect = QRect(column * emojiSize, row * emojiSize, emojiSize, emojiSize);
-			if (isBad) {
-				p.drawImage(targetRect, singleImage.copy(sourceRect).scaled(emojiSize, emojiSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+			auto targetRect = QRect(column * kEmojiSize, row * kEmojiSize, kEmojiSize, kEmojiSize);
+			if (kScaleFromLarge) {
+				p.drawImage(targetRect, singleImage.copy(sourceRect).scaled(kEmojiSize, kEmojiSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
 			} else {
 				p.drawImage(targetRect, singleImage, sourceRect);
 			}
@@ -273,16 +272,19 @@ QImage Generator::generateImage(int variantIndex) {
 }
 
 bool Generator::writeImages() {
-	constexpr const char *variantPostfix[] = { "", "_125x", "_150x", "_200x", "_250x" };
-	for (auto variantIndex = 0; variantIndex != kVariantsCount; variantIndex++) {
-		auto image = generateImage(variantIndex);
-		auto postfix = variantPostfix[variantIndex];
+	auto imageIndex = 0;
+	while (true) {
+		auto image = generateImage(imageIndex);
+		if (image.isNull()) {
+			break;
+		}
+		auto postfix = '_' + QString::number(imageIndex + 1);
 		auto filename = spritePath_ + postfix + ".webp";
 		auto bytes = QByteArray();
 		{
 			QBuffer buffer(&bytes);
-			if (!image.save(&buffer, "WEBP", (variantIndex < 3) ? 100 : 99)) {
-				logDataError() << "Could not save 'emoji" << postfix << ".webp'.";
+			if (!image.save(&buffer, "WEBP", kEmojiQuality)) {
+				logDataError() << "Could not save 'emoji" << postfix.toStdString() << ".webp'.";
 				return false;
 			}
 		}
@@ -301,15 +303,16 @@ bool Generator::writeImages() {
         if (needResave) {
 			QFile file(filename);
 			if (!file.open(QIODevice::WriteOnly)) {
-				logDataError() << "Could not open 'emoji" << postfix << ".png'.";
+				logDataError() << "Could not open 'emoji" << postfix.toStdString() << ".webp'.";
 				return false;
 			} else {
 				if (file.write(bytes) != bytes.size()) {
-					logDataError() << "Could not write 'emoji" << postfix << ".png'.";
+					logDataError() << "Could not write 'emoji" << postfix.toStdString() << ".webp'.";
 					return false;
 				}
 			}
 		}
+		++imageIndex;
 	}
 	return true;
 }
@@ -318,7 +321,7 @@ bool Generator::writeImages() {
 bool Generator::writeSource() {
 	source_ = std::make_unique<common::CppFile>(outputPath_ + ".cpp", project_);
 
-	source_->include("emoji_suggestions_data.h").newline();
+	source_->include("emoji_suggestions_data.h").include("ui/emoji_config.h").newline();
 	source_->pushNamespace("Ui").pushNamespace("Emoji").pushNamespace();
 	source_->stream() << "\
 \n\
@@ -339,6 +342,10 @@ std::vector<One> Items;\n\
 	source_->popNamespace().newline().pushNamespace("internal");
 	source_->stream() << "\
 \n\
+int FullCount() {\n\
+	return Items.size();\n\
+}\n\
+\n\
 EmojiPtr ByIndex(int index) {\n\
 	return (index >= 0 && index < Items.size()) ? &Items[index] : nullptr;\n\
 }\n\
@@ -346,6 +353,10 @@ EmojiPtr ByIndex(int index) {\n\
 EmojiPtr FindReplace(const QChar *start, const QChar *end, int *outLength) {\n\
 	auto index = FindReplaceIndex(start, end, outLength);\n\
 	return index ? &Items[index - 1] : nullptr;\n\
+}\n\
+\n\
+const std::vector<std::pair<QString, int>> GetReplacementPairs() {\n\
+	return ReplacementPairs;\n\
 }\n\
 \n\
 EmojiPtr Find(const QChar *start, const QChar *end, int *outLength) {\n\
@@ -363,7 +374,13 @@ void Init() {\n\
 \n\
 	Items.reserve(base::array_size(Data));\n\
 	for (auto &data : Data) {\n\
-		Items.emplace_back(takeString(data.idSize), uint16(data.column), uint16(data.row), bool(data.postfixed), bool(data.variated), data.original ? &Items[data.original - 1] : nullptr, One::CreationTag());\n\
+		Items.emplace_back(\n\
+			takeString(data.idSize),\n\
+			data.original ? &Items[data.original - 1] : nullptr,\n\
+			uint32(Items.size()),\n\
+			data.postfixed ? true : false,\n\
+			data.variated ? true : false,\n\
+			One::CreationTag());\n\
 	}\n\
 	InitReplacements();\n\
 }\n\
@@ -384,6 +401,7 @@ bool Generator::writeHeader() {
 \n\
 void Init();\n\
 \n\
+int FullCount();\n\
 EmojiPtr ByIndex(int index);\n\
 \n\
 EmojiPtr Find(const QChar *ch, const QChar *end, int *outLength = nullptr);\n\
@@ -402,9 +420,12 @@ inline bool IsReplaceEdge(const QChar *ch) {\n\
 //	return false;\n\
 }\n\
 \n\
+const std::vector<std::pair<QString, int>> GetReplacementPairs();\n\
 EmojiPtr FindReplace(const QChar *ch, const QChar *end, int *outLength = nullptr);\n\
 \n";
 	header->popNamespace().stream() << "\
+\n\
+constexpr auto kPostfix = static_cast<ushort>(0xFE0F);\n\
 \n\
 enum class Section {\n\
 	Recent,\n\
@@ -417,8 +438,6 @@ enum class Section {\n\
 	Symbols,\n\
 };\n\
 \n\
-int Index();\n\
-\n\
 int GetSectionCount(Section section);\n\
 EmojiPack GetSection(Section section);\n\
 \n";
@@ -427,13 +446,11 @@ EmojiPack GetSection(Section section);\n\
 
 template <typename Callback>
 bool Generator::enumerateWholeList(Callback callback) {
-	auto column = 0;
-	auto row = 0;
 	auto index = 0;
 	auto variated = -1;
 	auto coloredCount = 0;
 	for (auto &item : data_.list) {
-		if (!callback(item.id, column, row, item.postfixed, item.variated, item.colored, variated)) {
+		if (!callback(item.id, item.postfixed, item.variated, item.colored, variated)) {
 			return false;
 		}
 		if (coloredCount > 0 && (item.variated || !item.colored)) {
@@ -456,10 +473,6 @@ bool Generator::enumerateWholeList(Callback callback) {
 		} else if (variated >= 0) {
 			variated = -1;
 		}
-		if (++column == kEmojiInRow) {
-			column = 0;
-			++row;
-		}
 		++index;
 	}
 	return true;
@@ -468,17 +481,15 @@ bool Generator::enumerateWholeList(Callback callback) {
 bool Generator::writeInitCode() {
 	source_->stream() << "\
 struct DataStruct {\n\
-	ushort original : " << kOriginalBits << ";\n\
-	uchar idSize : " << kIdSizeBits << ";\n\
-	uchar column : " << kColumnBits << ";\n\
-	uchar row : " << kRowBits << ";\n\
-	bool postfixed : 1;\n\
-	bool variated : 1;\n\
+	uint32 original : " << kOriginalBits << ";\n\
+	uint32 idSize : " << kIdSizeBits << ";\n\
+	uint32 postfixed : 1;\n\
+	uint32 variated : 1;\n\
 };\n\
 \n\
 const ushort IdData[] = {";
 	startBinary();
-	if (!enumerateWholeList([this](Id id, int column, int row, bool isPostfixed, bool isVariated, bool isColored, int original) {
+	if (!enumerateWholeList([this](Id id, bool isPostfixed, bool isVariated, bool isColored, int original) {
 		return writeStringBinary(source_.get(), id);
 	})) {
 		return false;
@@ -490,7 +501,7 @@ const ushort IdData[] = {";
 	source_->stream() << " };\n\
 \n\
 const DataStruct Data[] = {\n";
-	if (!enumerateWholeList([this](Id id, int column, int row, bool isPostfixed, bool isVariated, bool isColored, int original) {
+	if (!enumerateWholeList([this](Id id, bool isPostfixed, bool isVariated, bool isColored, int original) {
 		if (original + 1 >= (1 << kOriginalBits)) {
 			logDataError() << "Too many entries.";
 			return false;
@@ -499,12 +510,8 @@ const DataStruct Data[] = {\n";
 			logDataError() << "Too large id.";
 			return false;
 		}
-		if (column >= (1 << kColumnBits) || row >= (1 << kRowBits)) {
-			logDataError() << "Bad row-column.";
-			return false;
-		}
 		source_->stream() << "\
-	{ ushort(" << (isColored ? (original + 1) : 0) << "), uchar(" << id.size() << "), uchar(" << column << "), uchar(" << row << "), " << (isPostfixed ? "true" : "false") << ", " << (isVariated ? "true" : "false") << " },\n";
+	{ uint32(" << (isColored ? (original + 1) : 0) << "), uint32(" << id.size() << "), uint32(" << (isPostfixed ? "1" : "0") << "), uint32(" << (isVariated ? "1" : "0") << ") },\n";
 		return true;
 	})) {
 		return false;
@@ -603,6 +610,14 @@ EmojiPack GetSection(Section section) {\n\
 
 bool Generator::writeFindReplace() {
 	source_->stream() << "\
+\n\
+const std::vector<std::pair<QString, int>> ReplacementPairs = {\n";
+	for (const auto &[what, index] : data_.replaces) {
+		source_->stream() << "\
+	{ qsl(\"" << what << "\"), " << index << " },\n";
+	}
+	source_->stream() << "\
+};\n\
 \n\
 int FindReplaceIndex(const QChar *start, const QChar *end, int *outLength) {\n\
 	auto ch = start;\n\
@@ -796,6 +811,7 @@ struct Replacement {\n\
 constexpr auto kReplacementMaxLength = " << maxLength << ";\n\
 \n\
 void InitReplacements();\n\
+const std::vector<Replacement> &GetAllReplacements();\n\
 const std::vector<const Replacement*> *GetReplacements(utf16char first);\n\
 utf16string GetReplacementEmoji(utf16string replacement);\n\
 \n";
@@ -934,6 +950,10 @@ const std::vector<const Replacement*> *GetReplacements(utf16char first) {\n\
 	}\n\
 	auto it = ReplacementsMap.find(first);\n\
 	return (it == ReplacementsMap.cend()) ? nullptr : &it->second;\n\
+}\n\
+\n\
+const std::vector<Replacement> &GetAllReplacements() {\n\
+	return Replacements;\n\
 }\n\
 \n\
 utf16string GetReplacementEmoji(utf16string replacement) {\n\

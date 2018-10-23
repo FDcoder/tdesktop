@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/confirm_phone_box.h"
 
@@ -89,15 +76,14 @@ void SentCodeField::fix() {
 	}
 }
 
-SentCodeCall::SentCodeCall(QObject *parent, base::lambda_once<void()> callCallback, base::lambda<void()> updateCallback)
-: _timer(parent)
-, _call(std::move(callCallback))
+SentCodeCall::SentCodeCall(FnMut<void()> callCallback, Fn<void()> updateCallback)
+: _call(std::move(callCallback))
 , _update(std::move(updateCallback)) {
-	_timer->connect(_timer, &QTimer::timeout, [this] {
+	_timer.setCallback([=] {
 		if (_status.state == State::Waiting) {
 			if (--_status.timeout <= 0) {
 				_status.state = State::Calling;
-				_timer->stop();
+				_timer.cancel();
 				if (_call) {
 					_call();
 				}
@@ -112,7 +98,7 @@ SentCodeCall::SentCodeCall(QObject *parent, base::lambda_once<void()> callCallba
 void SentCodeCall::setStatus(const Status &status) {
 	_status = status;
 	if (_status.state == State::Waiting) {
-		_timer->start(1000);
+		_timer.callEach(1000);
 	}
 }
 
@@ -143,7 +129,7 @@ void ConfirmPhoneBox::start(const QString &phone, const QString &hash) {
 ConfirmPhoneBox::ConfirmPhoneBox(QWidget*, const QString &phone, const QString &hash)
 : _phone(phone)
 , _hash(hash)
-, _call(this, [this] { sendCall(); }, [this] { update(); }) {
+, _call([this] { sendCall(); }, [this] { update(); }) {
 }
 
 void ConfirmPhoneBox::sendCall() {
@@ -176,7 +162,7 @@ void ConfirmPhoneBox::sendCodeDone(const MTPauth_SentCode &result) {
 }
 
 bool ConfirmPhoneBox::sendCodeFail(const RPCError &error) {
-	auto errorText = lang(lng_server_error);
+	auto errorText = Lang::Hard::ServerError();
 	if (MTP::isFloodError(error)) {
 		errorText = lang(lng_flood_error);
 	} else if (MTP::isDefaultHandledError(error)) {
@@ -211,17 +197,17 @@ void ConfirmPhoneBox::prepare() {
 	_about->setMarkedText(aboutText);
 
 	_code.create(this, st::confirmPhoneCodeField, langFactory(lng_code_ph));
-	_code->setAutoSubmit(_sentCodeLength, [this] { onSendCode(); });
-	_code->setChangedCallback([this] { showError(QString()); });
+	_code->setAutoSubmit(_sentCodeLength, [=] { sendCode(); });
+	_code->setChangedCallback([=] { showError(QString()); });
 
 	setTitle(langFactory(lng_confirm_phone_title));
 
-	addButton(langFactory(lng_confirm_phone_send), [this] { onSendCode(); });
-	addButton(langFactory(lng_cancel), [this] { closeBox(); });
+	addButton(langFactory(lng_confirm_phone_send), [=] { sendCode(); });
+	addButton(langFactory(lng_cancel), [=] { closeBox(); });
 
 	setDimensions(st::boxWidth, st::usernamePadding.top() + _code->height() + st::usernameSkip + _about->height() + st::usernameSkip);
 
-	connect(_code, SIGNAL(submitted(bool)), this, SLOT(onSendCode()));
+	connect(_code, &Ui::InputField::submitted, [=] { sendCode(); });
 
 	showChildren();
 }
@@ -230,7 +216,7 @@ void ConfirmPhoneBox::callDone(const MTPauth_SentCode &result) {
 	_call.callDone();
 }
 
-void ConfirmPhoneBox::onSendCode() {
+void ConfirmPhoneBox::sendCode() {
 	if (_sendCodeRequestId) {
 		return;
 	}
@@ -254,7 +240,7 @@ void ConfirmPhoneBox::confirmDone(const MTPBool &result) {
 }
 
 bool ConfirmPhoneBox::confirmFail(const RPCError &error) {
-	auto errorText = lang(lng_server_error);
+	auto errorText = Lang::Hard::ServerError();
 	if (MTP::isFloodError(error)) {
 		errorText = lang(lng_flood_error);
 	} else if (MTP::isDefaultHandledError(error)) {

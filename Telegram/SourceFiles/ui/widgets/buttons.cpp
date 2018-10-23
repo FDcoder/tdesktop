@@ -1,60 +1,67 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/widgets/buttons.h"
 
 #include "ui/effects/ripple_animation.h"
 #include "ui/effects/cross_animation.h"
+#include "ui/effects/numbers_animation.h"
 #include "lang/lang_instance.h"
 
 namespace Ui {
 
-LinkButton::LinkButton(QWidget *parent, const QString &text, const style::LinkButton &st) : AbstractButton(parent)
+LinkButton::LinkButton(
+	QWidget *parent,
+	const QString &text,
+	const style::LinkButton &st)
+: AbstractButton(parent)
+, _st(st)
 , _text(text)
-, _textWidth(st.font->width(_text))
-, _st(st) {
-	resize(_textWidth, _st.font->height);
+, _textWidth(st.font->width(_text)) {
+	resize(
+		naturalWidth(),
+		_st.padding.top() + _st.font->height + _st.padding.bottom());
 	setCursor(style::cur_pointer);
 }
 
 int LinkButton::naturalWidth() const {
-	return _textWidth;
+	return _st.padding.left() + _textWidth + _st.padding.right();
 }
 
 void LinkButton::paintEvent(QPaintEvent *e) {
 	Painter p(this);
-	auto &font = (isOver() ? _st.overFont : _st.font);
-	auto &pen = (isOver() ? _st.overColor : _st.color);
+
+	const auto &font = (isOver() ? _st.overFont : _st.font);
+	const auto pen = _textFgOverride.has_value()
+		? QPen(*_textFgOverride)
+		: isOver()
+		? _st.overColor
+		: _st.color;
 	p.setFont(font);
 	p.setPen(pen);
-	if (_textWidth > width()) {
-		p.drawText(0, font->ascent, font->elided(_text, width()));
+	const auto left = _st.padding.left();
+	const auto top = _st.padding.top() + font->ascent;
+	if (width() < naturalWidth()) {
+		const auto available = width() - left - _st.padding.right();
+		p.drawText(left, top, font->elided(_text, available));
 	} else {
-		p.drawText(0, font->ascent, _text);
+		p.drawText(left, top, _text);
 	}
 }
 
 void LinkButton::setText(const QString &text) {
 	_text = text;
 	_textWidth = _st.font->width(_text);
-	resize(_textWidth, _st.font->height);
+	resize(naturalWidth(), _st.font->height);
+	update();
+}
+
+void LinkButton::setColorOverride(std::optional<QColor> textFg) {
+	_textFgOverride = textFg;
 	update();
 }
 
@@ -62,11 +69,22 @@ void LinkButton::onStateChanged(State was, StateChangeSource source) {
 	update();
 }
 
-RippleButton::RippleButton(QWidget *parent, const style::RippleAnimation &st) : AbstractButton(parent)
+RippleButton::RippleButton(QWidget *parent, const style::RippleAnimation &st)
+: AbstractButton(parent)
 , _st(st) {
 }
 
-void RippleButton::setForceRippled(bool rippled, SetForceRippledWay way) {
+void RippleButton::clearState() {
+	AbstractButton::clearState();
+	if (_ripple) {
+		_ripple.reset();
+		update();
+	}
+}
+
+void RippleButton::setForceRippled(
+		bool rippled,
+		anim::type animated) {
 	if (_forceRippled != rippled) {
 		_forceRippled = rippled;
 		if (_forceRippled) {
@@ -80,7 +98,7 @@ void RippleButton::setForceRippled(bool rippled, SetForceRippledWay way) {
 			_ripple->lastStop();
 		}
 	}
-	if (way == SetForceRippledWay::SkipAnimation && _ripple) {
+	if (animated == anim::type::instant && _ripple) {
 		_ripple->lastFinish();
 	}
 	update();
@@ -129,10 +147,6 @@ QImage RippleButton::prepareRippleMask() const {
 
 QPoint RippleButton::prepareRippleStartPosition() const {
 	return mapFromGlobal(QCursor::pos());
-}
-
-void RippleButton::resetRipples() {
-	_ripple.reset();
 }
 
 RippleButton::~RippleButton() = default;
@@ -190,169 +204,7 @@ void FlatButton::paintEvent(QPaintEvent *e) {
 	p.drawText(r, _text, style::al_top);
 }
 
-class RoundButton::Numbers {
-public:
-	Numbers(const style::RoundButton &st, base::lambda<void()> animationCallback);
-
-	void setWidthChangedCallback(base::lambda<void()> callback) {
-		_widthChangedCallback = std::move(callback);
-	}
-	void setText(const QString &text, int value);
-	void stepAnimation(TimeMs ms);
-	void finishAnimation();
-
-	void paint(Painter &p, int x, int y, int outerWidth);
-	int countWidth() const;
-
-private:
-	struct Digit {
-		QChar from = 0;
-		QChar to = 0;
-		int fromWidth = 0;
-		int toWidth = 0;
-	};
-
-	void animationCallback();
-	void realSetText(QString text, int value);
-
-	const style::RoundButton &_st;
-
-	QList<Digit> _digits;
-	int _digitWidth = 0;
-
-	int _fromWidth = 0;
-	int _toWidth = 0;
-
-	Animation _a_ready;
-	QString _delayedText;
-	int _delayedValue = 0;
-
-	int _value = 0;
-	bool _growing = false;
-
-	base::lambda<void()> _animationCallback;
-	base::lambda<void()> _widthChangedCallback;
-
-};
-
-RoundButton::Numbers::Numbers(const style::RoundButton &st, base::lambda<void()> animationCallback)
-: _st(st)
-, _animationCallback(std::move(animationCallback)) {
-	for (auto ch = '0'; ch != '9'; ++ch) {
-		accumulate_max(_digitWidth, _st.font->m.width(ch));
-	}
-}
-
-void RoundButton::Numbers::setText(const QString &text, int value) {
-	if (_a_ready.animating(getms())) {
-		_delayedText = text;
-		_delayedValue = value;
-	} else {
-		realSetText(text, value);
-	}
-}
-
-void RoundButton::Numbers::animationCallback() {
-	if (_animationCallback) {
-		_animationCallback();
-	}
-	if (_widthChangedCallback) {
-		_widthChangedCallback();
-	}
-	if (!_a_ready.animating()) {
-		if (!_delayedText.isEmpty()) {
-			setText(_delayedText, _delayedValue);
-		}
-	}
-}
-
-void RoundButton::Numbers::realSetText(QString text, int value) {
-	_delayedText = QString();
-	_delayedValue = 0;
-
-	_growing = (value > _value);
-	_value = value;
-
-	auto newSize = text.size();
-	while (_digits.size() < newSize) {
-		_digits.push_front(Digit());
-	}
-	while (_digits.size() > newSize && !_digits.front().to.unicode()) {
-		_digits.pop_front();
-	}
-	auto oldSize = _digits.size();
-	auto animating = false;
-	for (auto i = 0, size = _digits.size(); i != size; ++i) {
-		auto &digit = _digits[i];
-		digit.from = digit.to;
-		digit.fromWidth = digit.toWidth;
-		digit.to = (newSize + i < size) ? QChar(0) : text[newSize + i - size];
-		digit.toWidth = digit.to.unicode() ? _st.font->m.width(digit.to) : 0;
-		if (digit.from != digit.to) {
-			animating = true;
-		}
-		if (!digit.from.unicode()) {
-			--oldSize;
-		}
-	}
-	_fromWidth = oldSize * _digitWidth;
-	_toWidth = newSize * _digitWidth;
-	if (animating) {
-		_a_ready.start([this] { animationCallback(); }, 0., 1., _st.numbersDuration);
-	}
-}
-
-int RoundButton::Numbers::countWidth() const {
-	return anim::interpolate(_fromWidth, _toWidth, anim::easeOutCirc(1., _a_ready.current(1.)));
-}
-
-void RoundButton::Numbers::stepAnimation(TimeMs ms) {
-	_a_ready.step(ms);
-}
-
-void RoundButton::Numbers::finishAnimation() {
-	auto width = countWidth();
-	_a_ready.finish();
-	if (_widthChangedCallback && countWidth() != width) {
-		_widthChangedCallback();
-	}
-	if (!_delayedText.isEmpty()) {
-		setText(_delayedText, _delayedValue);
-	}
-}
-
-void RoundButton::Numbers::paint(Painter &p, int x, int y, int outerWidth) {
-	auto digitsCount = _digits.size();
-	if (!digitsCount) return;
-
-	auto progress = anim::easeOutCirc(1., _a_ready.current(1.));
-	auto width = anim::interpolate(_fromWidth, _toWidth, progress);
-
-	QString singleChar('0');
-	if (rtl()) x = outerWidth - x - width;
-	x += width - _digits.size() * _digitWidth;
-	auto fromTop = anim::interpolate(0, _st.font->height, progress) * (_growing ? 1 : -1);
-	auto toTop = anim::interpolate(_st.font->height, 0, progress) * (_growing ? -1 : 1);
-	for (auto i = 0; i != digitsCount; ++i) {
-		auto &digit = _digits[i];
-		auto from = digit.from;
-		auto to = digit.to;
-		if (from.unicode()) {
-			p.setOpacity(1. - progress);
-			singleChar[0] = from;
-			p.drawText(x + (_digitWidth - digit.fromWidth) / 2, y + fromTop + _st.font->ascent, singleChar);
-		}
-		if (to.unicode()) {
-			p.setOpacity(progress);
-			singleChar[0] = to;
-			p.drawText(x + (_digitWidth - digit.toWidth) / 2, y + toTop + _st.font->ascent, singleChar);
-		}
-		x += _digitWidth;
-	}
-	p.setOpacity(1.);
-}
-
-RoundButton::RoundButton(QWidget *parent, base::lambda<QString()> textFactory, const style::RoundButton &st) : RippleButton(parent, st.ripple)
+RoundButton::RoundButton(QWidget *parent, Fn<QString()> textFactory, const style::RoundButton &st) : RippleButton(parent, st.ripple)
 , _textFactory(std::move(textFactory))
 , _st(st) {
 	subscribe(Lang::Current().updated(), [this] { refreshText(); });
@@ -364,7 +216,7 @@ void RoundButton::setTextTransform(TextTransform transform) {
 	refreshText();
 }
 
-void RoundButton::setText(base::lambda<QString()> textFactory) {
+void RoundButton::setText(Fn<QString()> textFactory) {
 	_textFactory = std::move(textFactory);
 	refreshText();
 }
@@ -374,16 +226,20 @@ void RoundButton::setNumbersText(const QString &numbersText, int numbers) {
 		_numbers.reset();
 	} else {
 		if (!_numbers) {
-			_numbers = std::make_unique<Numbers>(_st, [this] { numbersAnimationCallback(); });
+			_numbers = std::make_unique<NumbersAnimation>(_st.font, [this] {
+				numbersAnimationCallback();
+			});
 		}
 		_numbers->setText(numbersText, numbers);
 	}
 	refreshText();
 }
 
-void RoundButton::setWidthChangedCallback(base::lambda<void()> callback) {
+void RoundButton::setWidthChangedCallback(Fn<void()> callback) {
 	if (!_numbers) {
-		_numbers = std::make_unique<Numbers>(_st, [this] { numbersAnimationCallback(); });
+		_numbers = std::make_unique<NumbersAnimation>(_st.font, [this] {
+			numbersAnimationCallback();
+		});
 	}
 	_numbers->setWidthChangedCallback(std::move(callback));
 }
@@ -396,7 +252,7 @@ void RoundButton::stepNumbersAnimation(TimeMs ms) {
 
 void RoundButton::finishNumbersAnimation() {
 	if (_numbers) {
-		_numbers->finishAnimation();
+		_numbers->finishAnimating();
 	}
 }
 
@@ -407,7 +263,12 @@ void RoundButton::numbersAnimationCallback() {
 
 void RoundButton::setFullWidth(int newFullWidth) {
 	_fullWidthOverride = newFullWidth;
-	resizeToText();
+	refreshText();
+}
+
+void RoundButton::setFullRadius(bool enabled) {
+	_fullRadius = enabled;
+	update();
 }
 
 void RoundButton::refreshText() {
@@ -425,7 +286,13 @@ QString RoundButton::computeFullText() const {
 
 void RoundButton::resizeToText() {
 	int innerWidth = contentWidth();
-	if (_fullWidthOverride < 0) {
+	if (_fullWidthOverride > 0) {
+		if (_fullWidthOverride < innerWidth + (_st.height - _st.font->height)) {
+			_text = _st.font->elided(computeFullText(), qMax(_fullWidthOverride - (_st.height - _st.font->height), 1));
+			_textWidth = _st.font->width(_text);
+		}
+		resize(_fullWidthOverride, _st.height + _st.padding.top() + _st.padding.bottom());
+	} else if (_fullWidthOverride < 0) {
 		resize(innerWidth - _fullWidthOverride, _st.height + _st.padding.top() + _st.padding.bottom());
 	} else if (_st.width <= 0) {
 		resize(innerWidth - _st.width + _st.padding.left() + _st.padding.right(), _st.height + _st.padding.top() + _st.padding.bottom());
@@ -443,6 +310,9 @@ int RoundButton::contentWidth() const {
 	if (_numbers) {
 		result += (result ? _st.numbersSkip : 0) + _numbers->countWidth();
 	}
+	if (!_st.icon.empty() && _st.iconPosition.x() < 0) {
+		result += _st.icon.width() - _st.iconPosition.x();
+	}
 	return result;
 }
 
@@ -454,23 +324,48 @@ void RoundButton::paintEvent(QPaintEvent *e) {
 	if (_fullWidthOverride < 0) {
 		rounded = QRect(0, rounded.top(), innerWidth - _fullWidthOverride, rounded.height());
 	}
-	App::roundRect(p, myrtlrect(rounded), _st.textBg, ImageRoundRadius::Small);
+	const auto drawRect = [&](const style::color &color) {
+		const auto fill = myrtlrect(rounded);
+		if (_fullRadius) {
+			const auto radius = rounded.height() / 2;
+			PainterHighQualityEnabler hq(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(color);
+			p.drawRoundedRect(fill, radius, radius);
+		} else {
+			App::roundRect(p, fill, color, ImageRoundRadius::Small);
+		}
+	};
+	drawRect(_st.textBg);
 
 	auto over = isOver();
 	auto down = isDown();
 	if (over || down) {
-		App::roundRect(p, myrtlrect(rounded), _st.textBgOver, ImageRoundRadius::Small);
+		drawRect(_st.textBgOver);
 	}
 
 	auto ms = getms();
 	paintRipple(p, rounded.x(), rounded.y(), ms);
 
 	p.setFont(_st.font);
-	int textLeft = _st.padding.left() + ((width() - innerWidth - _st.padding.left() - _st.padding.right()) / 2);
+	const auto textTop = _st.padding.top() + _st.textTop;
+	auto textLeft = _st.padding.left()
+		+ ((width()
+			- innerWidth
+			- _st.padding.left()
+			- _st.padding.right()) / 2);
 	if (_fullWidthOverride < 0) {
 		textLeft = -_fullWidthOverride / 2;
 	}
-	int textTop = _st.padding.top() + _st.textTop;
+	if (!_st.icon.empty() && _st.iconPosition.x() < 0) {
+		textLeft += _st.icon.width() - _st.iconPosition.x();
+	}
+	const auto iconLeft = (_st.iconPosition.x() >= 0)
+		? _st.iconPosition.x()
+		: (textLeft + _st.iconPosition.x() - _st.icon.width());
+	const auto iconTop = (_st.iconPosition.y() >= 0)
+		? _st.iconPosition.y()
+		: (textTop + _st.iconPosition.y());
 	if (!_text.isEmpty()) {
 		p.setPen((over || down) ? _st.textFgOver : _st.textFg);
 		p.drawTextLeft(textLeft, textTop, width(), _text);
@@ -480,7 +375,9 @@ void RoundButton::paintEvent(QPaintEvent *e) {
 		p.setPen((over || down) ? _st.numbersTextFgOver : _st.numbersTextFg);
 		_numbers->paint(p, textLeft, textTop, width());
 	}
-	_st.icon.paint(p, QPoint(_st.padding.left(), _st.padding.top()), width());
+	if (!_st.icon.empty()) {
+		_st.icon.paint(p, QPoint(iconLeft, iconTop), width());
+	}
 }
 
 QImage RoundButton::prepareRippleMask() const {
@@ -489,7 +386,9 @@ QImage RoundButton::prepareRippleMask() const {
 	if (_fullWidthOverride < 0) {
 		rounded = QRect(0, rounded.top(), innerWidth - _fullWidthOverride, rounded.height());
 	}
-	return RippleAnimation::roundRectMask(rounded.size(), st::buttonRadius);
+	return RippleAnimation::roundRectMask(
+		rounded.size(),
+		_fullRadius ? (rounded.height() / 2) : st::buttonRadius);
 }
 
 QPoint RoundButton::prepareRippleStartPosition() const {
@@ -573,7 +472,12 @@ void IconButton::onStateChanged(State was, StateChangeSource source) {
 }
 
 QPoint IconButton::prepareRippleStartPosition() const {
-	return mapFromGlobal(QCursor::pos()) - _st.rippleAreaPosition;
+	auto result = mapFromGlobal(QCursor::pos())
+		- _st.rippleAreaPosition;
+	auto rect = QRect(0, 0, _st.rippleAreaSize, _st.rippleAreaSize);
+	return rect.contains(result)
+		? result
+		: DisabledRippleStartPosition();
 }
 
 QImage IconButton::prepareRippleMask() const {
@@ -628,33 +532,41 @@ CrossButton::CrossButton(QWidget *parent, const style::CrossButton &st) : Ripple
 , _a_loading(animation(this, &CrossButton::step_loading)) {
 	resize(_st.width, _st.height);
 	setCursor(style::cur_pointer);
-	hide();
+	setVisible(false);
 }
 
 void CrossButton::step_loading(TimeMs ms, bool timer) {
 	if (stopLoadingAnimation(ms)) {
 		_a_loading.stop();
-	}
-	if (timer) {
+		update();
+	} else if (timer && !anim::Disabled()) {
 		update();
 	}
 }
 
-void CrossButton::toggleAnimated(bool visible) {
-	if (_shown == visible) {
-		return;
+void CrossButton::toggle(bool visible, anim::type animated) {
+	if (_shown != visible) {
+		_shown = visible;
+		if (animated == anim::type::normal) {
+			if (isHidden()) {
+				setVisible(true);
+			}
+			_a_show.start(
+				[this] { animationCallback(); },
+				_shown ? 0. : 1.,
+				_shown ? 1. : 0.,
+				_st.duration);
+		}
 	}
-	_shown = visible;
-	if (isHidden()) {
-		show();
+	if (animated == anim::type::instant) {
+		finishAnimating();
 	}
-	_a_show.start([this] { animationCallback(); }, _shown ? 0. : 1., _shown ? 1. : 0., _st.duration);
 }
 
 void CrossButton::animationCallback() {
 	update();
-	if (!_shown && !_a_show.animating()) {
-		hide();
+	if (!_a_show.animating()) {
+		setVisible(_shown);
 	}
 }
 
@@ -672,11 +584,30 @@ void CrossButton::paintEvent(QPaintEvent *e) {
 	if (_a_loading.animating()) {
 		if (stopLoadingAnimation(ms)) {
 			_a_loading.stop();
+		} else if (anim::Disabled()) {
+			CrossAnimation::paintStaticLoading(
+				p,
+				_st.cross,
+				over ? _st.crossFgOver : _st.crossFg,
+				_st.crossPosition.x(),
+				_st.crossPosition.y(),
+				width(),
+				shown);
+			return;
 		} else {
-			loading = ((ms - _loadingStartMs) % _st.loadingPeriod) / float64(_st.loadingPeriod);
+			loading = ((ms - _loadingStartMs) % _st.loadingPeriod)
+				/ float64(_st.loadingPeriod);
 		}
 	}
-	CrossAnimation::paint(p, _st.cross, over ? _st.crossFgOver : _st.crossFg, _st.crossPosition.x(), _st.crossPosition.y(), width(), shown, loading);
+	CrossAnimation::paint(
+		p,
+		_st.cross,
+		over ? _st.crossFgOver : _st.crossFg,
+		_st.crossPosition.x(),
+		_st.crossPosition.y(),
+		width(),
+		shown,
+		loading);
 }
 
 bool CrossButton::stopLoadingAnimation(TimeMs ms) {
@@ -686,7 +617,7 @@ bool CrossButton::stopLoadingAnimation(TimeMs ms) {
 	auto stopPeriod = (_loadingStopMs - _loadingStartMs) / _st.loadingPeriod;
 	auto currentPeriod = (ms - _loadingStartMs) / _st.loadingPeriod;
 	if (currentPeriod != stopPeriod) {
-		t_assert(currentPeriod > stopPeriod);
+		Assert(currentPeriod > stopPeriod);
 		return true;
 	}
 	return false;
@@ -704,6 +635,9 @@ void CrossButton::setLoadingAnimation(bool enabled) {
 		if (!((_loadingStopMs - _loadingStartMs) % _st.loadingPeriod)) {
 			_a_loading.stop();
 		}
+	}
+	if (anim::Disabled()) {
+		update();
 	}
 }
 

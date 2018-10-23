@@ -1,22 +1,9 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/win/notifications_manager_win.h"
 
@@ -24,8 +11,8 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "platform/win/windows_app_user_model_id.h"
 #include "platform/win/windows_event_filter.h"
 #include "platform/win/windows_dlls.h"
+#include "history/history.h"
 #include "mainwindow.h"
-#include "base/task_queue.h"
 
 #include <Shobjidl.h>
 #include <shellapi.h>
@@ -209,21 +196,26 @@ typedef ABI::Windows::Foundation::ITypedEventHandler<ToastNotification*, ::IInsp
 typedef ABI::Windows::Foundation::ITypedEventHandler<ToastNotification*, ToastDismissedEventArgs*> DesktopToastDismissedEventHandler;
 typedef ABI::Windows::Foundation::ITypedEventHandler<ToastNotification*, ToastFailedEventArgs*> DesktopToastFailedEventHandler;
 
-class ToastEventHandler : public Implements<DesktopToastActivatedEventHandler, DesktopToastDismissedEventHandler, DesktopToastFailedEventHandler> {
+class ToastEventHandler : public Implements<
+	DesktopToastActivatedEventHandler,
+	DesktopToastDismissedEventHandler,
+	DesktopToastFailedEventHandler> {
 public:
 	// We keep a weak pointer to a member field of native notifications manager.
-	ToastEventHandler::ToastEventHandler(const std::shared_ptr<Manager*> &guarded, const PeerId &peer, MsgId msg)
+	ToastEventHandler(
+		const std::shared_ptr<Manager*> &guarded,
+		const PeerId &peer,
+		MsgId msg)
 	: _peerId(peer)
 	, _msgId(msg)
 	, _weak(guarded) {
 	}
 	~ToastEventHandler() = default;
 
-	void performOnMainQueue(base::lambda_once<void(Manager *manager)> task) {
-		base::TaskQueue::Main().Put([weak = _weak, task = std::move(task)]() mutable {
-			if (auto strong = weak.lock()) {
-				task(*strong);
-			}
+	void performOnMainQueue(FnMut<void(Manager *manager)> task) {
+		const auto weak = _weak;
+		crl::on_main(weak, [=, task = std::move(task)]() mutable {
+			task(*weak.lock());
 		});
 	}
 
@@ -597,9 +589,27 @@ namespace {
 bool QuietHoursEnabled = false;
 DWORD QuietHoursValue = 0;
 
+bool useQuietHoursRegistryEntry() {
+	// Taken from QSysInfo.
+	OSVERSIONINFO result = { sizeof(OSVERSIONINFO), 0, 0, 0, 0,{ '\0' } };
+	if (const auto library = GetModuleHandle(L"ntdll.dll")) {
+		using RtlGetVersionFunction = NTSTATUS(NTAPI*)(LPOSVERSIONINFO);
+		const auto RtlGetVersion = reinterpret_cast<RtlGetVersionFunction>(
+			GetProcAddress(library, "RtlGetVersion"));
+		if (RtlGetVersion) {
+			RtlGetVersion(&result);
+		}
+	}
+	// At build 17134 (Redstone 4) the "Quiet hours" was replaced
+	// by "Focus assist" and it looks like it doesn't use registry.
+	return (result.dwMajorVersion == 10
+		&& result.dwMinorVersion == 0
+		&& result.dwBuildNumber < 17134);
+}
+
 // Thanks https://stackoverflow.com/questions/35600128/get-windows-quiet-hours-from-win32-or-c-sharp-api
 void queryQuietHours() {
-	if (QSysInfo::windowsVersion() < QSysInfo::WV_WINDOWS10) {
+	if (!useQuietHoursRegistryEntry()) {
 		// There are quiet hours in Windows starting from Windows 8.1
 		// But there were several reports about the notifications being shut
 		// down according to the registry while no quiet hours were enabled.
@@ -607,8 +617,8 @@ void queryQuietHours() {
 		return;
 	}
 
-	LPTSTR lpKeyName = L"Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings";
-	LPTSTR lpValueName = L"NOC_GLOBAL_SETTING_TOASTS_ENABLED";
+	LPCWSTR lpKeyName = L"Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings";
+	LPCWSTR lpValueName = L"NOC_GLOBAL_SETTING_TOASTS_ENABLED";
 	HKEY key;
 	auto result = RegOpenKeyEx(HKEY_CURRENT_USER, lpKeyName, 0, KEY_READ, &key);
 	if (result != ERROR_SUCCESS) {

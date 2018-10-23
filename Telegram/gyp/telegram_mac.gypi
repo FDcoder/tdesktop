@@ -1,27 +1,12 @@
 # This file is part of Telegram Desktop,
-# the official desktop version of Telegram messaging app, see https://telegram.org
+# the official desktop application for the Telegram messaging service.
 #
-# Telegram Desktop is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# It is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU General Public License for more details.
-#
-# In addition, as a special exception, the copyright holders give permission
-# to link the code of portions of this program with the OpenSSL library.
-#
-# Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-# Copyright (c) 2014 John Preston, https://desktop.telegram.org
+# For license and copyright information please follow this link:
+# https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 {
   'conditions': [[ 'build_mac', {
     'xcode_settings': {
-      'GCC_PREFIX_HEADER': '<(src_loc)/stdafx.h',
-      'GCC_PRECOMPILE_PREFIX_HEADER': 'YES',
       'INFOPLIST_FILE': '../Telegram.plist',
       'CURRENT_PROJECT_VERSION': '<!(./print_version.sh)',
       'ASSETCATALOG_COMPILER_APPICON_NAME': 'AppIcon',
@@ -51,16 +36,14 @@
         },
       },
     },
-    'mac_bundle': '1',
-    'mac_bundle_resources': [
-      '<!@(python -c "for s in \'<@(langpacks)\'.split(\' \'): print(\'<(res_loc)/langs/\' + s + \'.lproj/Localizable.strings\')")',
-      '../Telegram/Images.xcassets',
-    ],
   }], [ 'build_macold', {
+    'defines': [
+      'OS_MAC_OLD',
+    ],
     'xcode_settings': {
-      'PRODUCT_BUNDLE_IDENTIFIER': 'com.tdesktop.Telegram',
       'OTHER_CPLUSPLUSFLAGS': [ '-nostdinc++' ],
       'OTHER_LDFLAGS': [
+        '-isysroot', '/',
         '-lbase',
         '-lcrashpad_client',
         '-lcrashpad_util',
@@ -76,24 +59,28 @@
         '/usr/local/macold/lib/libexif.a',
         '/usr/local/macold/lib/libc++.a',
         '/usr/local/macold/lib/libc++abi.a',
-        '<(libs_loc)/macold/openssl-1.0.1h/libssl.a',
-        '<(libs_loc)/macold/openssl-1.0.1h/libcrypto.a',
       ],
     },
     'include_dirs': [
       '/usr/local/macold',
       '/usr/local/macold/include/c++/v1',
-      '<(libs_loc)/macold/openssl-1.0.1h/include',
+      '<(libs_loc)/macold/libexif-0.6.20',
       '<(libs_loc)/macold/crashpad',
       '<(libs_loc)/macold/crashpad/third_party/mini_chromium/mini_chromium',
     ],
     'configurations': {
       'Debug': {
+        'xcode_settings': {
+          'PRODUCT_BUNDLE_IDENTIFIER': 'com.tdesktop.TelegramDebugOld',
+        },
         'library_dirs': [
           '<(libs_loc)/macold/crashpad/out/Debug',
         ],
       },
       'Release': {
+        'xcode_settings': {
+          'PRODUCT_BUNDLE_IDENTIFIER': 'com.tdesktop.Telegram',
+        },
         'library_dirs': [
           '<(libs_loc)/macold/crashpad/out/Release',
         ],
@@ -136,14 +123,11 @@
         '/usr/local/lib/libavutil.a',
         '/usr/local/lib/libswscale.a',
         '/usr/local/lib/libswresample.a',
-        '<(libs_loc)/openssl-xcode/libssl.a',
-        '<(libs_loc)/openssl-xcode/libcrypto.a',
       ],
     },
     'include_dirs': [
       '<(libs_loc)/crashpad',
       '<(libs_loc)/crashpad/third_party/mini_chromium/mini_chromium',
-      '<(libs_loc)/openssl-xcode/include'
     ],
     'configurations': {
       'Debug': {
@@ -159,13 +143,24 @@
     },
   }], [ '"<(build_macold)" != "1" and "<(build_macstore)" != "1"', {
     'xcode_settings': {
-      'PRODUCT_BUNDLE_IDENTIFIER': 'com.tdesktop.Telegram',
       'OTHER_LDFLAGS': [
         '-lbase',
         '-lcrashpad_client',
         '-lcrashpad_util',
       ],
      },
+    'configurations': {
+      'Debug': {
+        'xcode_settings': {
+          'PRODUCT_BUNDLE_IDENTIFIER': 'com.tdesktop.TelegramDebug',
+        },
+      },
+      'Release': {
+        'xcode_settings': {
+          'PRODUCT_BUNDLE_IDENTIFIER': 'com.tdesktop.Telegram',
+        },
+      },
+    },
     'postbuilds': [{
       'postbuild_name': 'Force Frameworks path',
       'action': [
@@ -201,12 +196,6 @@
         '<(libs_loc)/breakpad/src/client/mac/build/Release',
       ],
     },
-    'mac_sandbox': 1,
-    'mac_sandbox_development_team': '6N38VWS5BX',
-    'product_name': 'Telegram Desktop',
-    'sources': [
-      '../Telegram/Telegram Desktop.entitlements',
-    ],
     'defines': [
       'TDESKTOP_DISABLE_AUTOUPDATE',
       'OS_MAC_STORE',

@@ -1,29 +1,41 @@
 /*
 This file is part of Telegram Desktop,
-the official desktop version of Telegram messaging app, see https://telegram.org
+the official desktop application for the Telegram messaging service.
 
-Telegram Desktop is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-It is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-In addition, as a special exception, the copyright holders give permission
-to link the code of portions of this program with the OpenSSL library.
-
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <rpl/event_stream.h>
+#include <rpl/filter.h>
+#include <rpl/variable.h>
 #include "base/timer.h"
+
+class ApiWrap;
+enum class SendFilesWay;
+
+namespace Ui {
+enum class InputSubmitSettings;
+} // namespace Ui
+
+namespace Support {
+enum class SwitchSettings;
+class Templates;
+} // namespace Support
+
+namespace Data {
+class Session;
+} // namespace Data
+
+namespace Calls {
+enum class PeerToPeer;
+} // namespace Calls
 
 namespace Storage {
 class Downloader;
+class Uploader;
+class Facade;
 } // namespace Storage
 
 namespace Window {
@@ -41,51 +53,56 @@ namespace ChatHelpers {
 enum class SelectorTab;
 } // namespace ChatHelpers
 
-class ApiWrap;
+namespace Core {
+class Changelogs;
+} // namespace Core
 
-class AuthSessionData final {
+class AuthSessionSettings final {
 public:
-	base::Variable<bool> &contactsLoaded() {
-		return _contactsLoaded;
-	}
-	base::Variable<bool> &allChatsLoaded() {
-		return _allChatsLoaded;
-	}
-	base::Observable<void> &moreChatsLoaded() {
-		return _moreChatsLoaded;
-	}
-	base::Observable<void> &savedGifsUpdated() {
-		return _savedGifsUpdated;
-	}
-	base::Observable<gsl::not_null<History*>> &historyCleared() {
-		return _historyCleared;
-	}
-	base::Observable<gsl::not_null<const HistoryItem*>> &repaintLogEntry() {
-		return _repaintLogEntry;
-	}
-	base::Observable<void> &pendingHistoryResize() {
-		return _pendingHistoryResize;
-	}
-	struct ItemVisibilityQuery {
-		gsl::not_null<HistoryItem*> item;
-		gsl::not_null<bool*> isVisible;
-	};
-	base::Observable<ItemVisibilityQuery> &queryItemVisibility() {
-		return _queryItemVisibility;
-	}
-
-	void copyFrom(const AuthSessionData &other) {
-		_variables = other._variables;
+	void moveFrom(AuthSessionSettings &&other) {
+		_variables = std::move(other._variables);
 	}
 	QByteArray serialize() const;
 	void constructFromSerialized(const QByteArray &serialized);
 
-	bool lastSeenWarningSeen() const {
-		return _variables.lastSeenWarningSeen;
-	}
 	void setLastSeenWarningSeen(bool lastSeenWarningSeen) {
 		_variables.lastSeenWarningSeen = lastSeenWarningSeen;
 	}
+	bool lastSeenWarningSeen() const {
+		return _variables.lastSeenWarningSeen;
+	}
+	void setSendFilesWay(SendFilesWay way) {
+		_variables.sendFilesWay = way;
+	}
+	SendFilesWay sendFilesWay() const {
+		return _variables.sendFilesWay;
+	}
+	void setSendSubmitWay(Ui::InputSubmitSettings value) {
+		_variables.sendSubmitWay = value;
+	}
+	Ui::InputSubmitSettings sendSubmitWay() const {
+		return _variables.sendSubmitWay;
+	}
+
+	void setSupportSwitch(Support::SwitchSettings value) {
+		_variables.supportSwitch = value;
+	}
+	Support::SwitchSettings supportSwitch() const {
+		return _variables.supportSwitch;
+	}
+	void setSupportFixChatsOrder(bool fix) {
+		_variables.supportFixChatsOrder = fix;
+	}
+	bool supportFixChatsOrder() const {
+		return _variables.supportFixChatsOrder;
+	}
+	void setSupportTemplatesAutocomplete(bool enabled) {
+		_variables.supportTemplatesAutocomplete = enabled;
+	}
+	bool supportTemplatesAutocomplete() const {
+		return _variables.supportTemplatesAutocomplete;
+	}
+
 	ChatHelpers::SelectorTab selectorTab() const {
 		return _variables.selectorTab;
 	}
@@ -95,8 +112,28 @@ public:
 	bool tabbedSelectorSectionEnabled() const {
 		return _variables.tabbedSelectorSectionEnabled;
 	}
-	void setTabbedSelectorSectionEnabled(bool enabled) {
-		_variables.tabbedSelectorSectionEnabled = enabled;
+	void setTabbedSelectorSectionEnabled(bool enabled);
+	bool thirdSectionInfoEnabled() const {
+		return _variables.thirdSectionInfoEnabled;
+	}
+	void setThirdSectionInfoEnabled(bool enabled);
+	rpl::producer<bool> thirdSectionInfoEnabledValue() const;
+	int thirdSectionExtendedBy() const {
+		return _variables.thirdSectionExtendedBy;
+	}
+	void setThirdSectionExtendedBy(int savedValue) {
+		_variables.thirdSectionExtendedBy = savedValue;
+	}
+	bool tabbedReplacedWithInfo() const {
+		return _tabbedReplacedWithInfo;
+	}
+	void setTabbedReplacedWithInfo(bool enabled);
+	rpl::producer<bool> tabbedReplacedWithInfoValue() const;
+	void setSmallDialogsList(bool enabled) {
+		_variables.smallDialogsList = enabled;
+	}
+	bool smallDialogsList() const {
+		return _variables.smallDialogsList;
 	}
 	void setLastTimeVideoPlayedAt(TimeMs time) {
 		_lastTimeVideoPlayedAt = time;
@@ -129,70 +166,123 @@ public:
 	RectPart floatPlayerCorner() const {
 		return _variables.floatPlayerCorner;
 	}
+	void setDialogsWidthRatio(float64 ratio);
+	float64 dialogsWidthRatio() const;
+	rpl::producer<float64> dialogsWidthRatioChanges() const;
+	void setThirdColumnWidth(int width);
+	int thirdColumnWidth() const;
+	rpl::producer<int> thirdColumnWidthChanges() const;
+
+	void setGroupStickersSectionHidden(PeerId peerId) {
+		_variables.groupStickersSectionHidden.insert(peerId);
+	}
+	bool isGroupStickersSectionHidden(PeerId peerId) const {
+		return _variables.groupStickersSectionHidden.contains(peerId);
+	}
+	void removeGroupStickersSectionHidden(PeerId peerId) {
+		_variables.groupStickersSectionHidden.remove(peerId);
+	}
+
+	rpl::producer<Calls::PeerToPeer> callsPeerToPeerValue() const {
+		return _variables.callsPeerToPeer.value();
+	}
+	Calls::PeerToPeer callsPeerToPeer() const {
+		return _variables.callsPeerToPeer.current();
+	}
+	void setCallsPeerToPeer(Calls::PeerToPeer value) {
+		_variables.callsPeerToPeer = value;
+	}
 
 private:
 	struct Variables {
 		Variables();
 
+		static constexpr auto kDefaultDialogsWidthRatio = 5. / 14;
+		static constexpr auto kDefaultThirdColumnWidth = 0;
+
 		bool lastSeenWarningSeen = false;
-		ChatHelpers::SelectorTab selectorTab;
-		bool tabbedSelectorSectionEnabled = true;
+		SendFilesWay sendFilesWay;
+		ChatHelpers::SelectorTab selectorTab; // per-window
+		bool tabbedSelectorSectionEnabled = false; // per-window
 		int tabbedSelectorSectionTooltipShown = 0;
 		QMap<QString, QString> soundOverrides;
-		Window::Column floatPlayerColumn;
-		RectPart floatPlayerCorner;
+		Window::Column floatPlayerColumn; // per-window
+		RectPart floatPlayerCorner; // per-window
+		base::flat_set<PeerId> groupStickersSectionHidden;
+		bool thirdSectionInfoEnabled = true; // per-window
+		bool smallDialogsList = false; // per-window
+		int thirdSectionExtendedBy = -1; // per-window
+		rpl::variable<float64> dialogsWidthRatio
+			= kDefaultDialogsWidthRatio; // per-window
+		rpl::variable<int> thirdColumnWidth
+			= kDefaultThirdColumnWidth; // per-window
+		rpl::variable<Calls::PeerToPeer> callsPeerToPeer
+			= Calls::PeerToPeer();
+		Ui::InputSubmitSettings sendSubmitWay;
+
+		Support::SwitchSettings supportSwitch;
+		bool supportFixChatsOrder = true;
+		bool supportTemplatesAutocomplete = true;
 	};
 
-	base::Variable<bool> _contactsLoaded = { false };
-	base::Variable<bool> _allChatsLoaded = { false };
-	base::Observable<void> _moreChatsLoaded;
-	base::Observable<void> _savedGifsUpdated;
-	base::Observable<gsl::not_null<History*>> _historyCleared;
-	base::Observable<gsl::not_null<const HistoryItem*>> _repaintLogEntry;
-	base::Observable<void> _pendingHistoryResize;
-	base::Observable<ItemVisibilityQuery> _queryItemVisibility;
+	rpl::event_stream<bool> _thirdSectionInfoEnabledValue;
+	bool _tabbedReplacedWithInfo = false;
+	rpl::event_stream<bool> _tabbedReplacedWithInfoValue;
+
 	Variables _variables;
 	TimeMs _lastTimeVideoPlayedAt = 0;
 
 };
 
-class AuthSession final : private base::Subscriber {
+// One per Messenger.
+class AuthSession;
+AuthSession &Auth();
+
+class AuthSession final
+	: public base::has_weak_ptr
+	, private base::Subscriber {
 public:
-	AuthSession(UserId userId);
+	AuthSession(const MTPUser &user);
 
 	AuthSession(const AuthSession &other) = delete;
 	AuthSession &operator=(const AuthSession &other) = delete;
 
 	static bool Exists();
 
-	static AuthSession &Current();
-	static UserId CurrentUserId() {
-		return Current().userId();
-	}
-	static PeerId CurrentUserPeerId() {
-		return peerFromUser(CurrentUserId());
-	}
-	static UserData *CurrentUser();
-
 	UserId userId() const {
-		return _userId;
+		return _user->bareId();
+	}
+	PeerId userPeerId() const {
+		return _user->id;
+	}
+	not_null<UserData*> user() const {
+		return _user;
 	}
 	bool validateSelf(const MTPUser &user);
 
 	Storage::Downloader &downloader() {
 		return *_downloader;
 	}
+	Storage::Uploader &uploader() {
+		return *_uploader;
+	}
+	Storage::Facade &storage() {
+		return *_storage;
+	}
 
-	static base::Observable<void> &CurrentDownloaderTaskFinished();
+	base::Observable<void> &downloaderTaskFinished();
 
 	Window::Notifications::System &notifications() {
 		return *_notifications;
 	}
 
-	AuthSessionData &data() {
-		return _data;
+	Data::Session &data() {
+		return *_data;
 	}
-	void saveDataDelayed(TimeMs delay);
+	AuthSessionSettings &settings() {
+		return _settings;
+	}
+	void saveSettingsDelayed(TimeMs delay = kDefaultSaveDelay);
 
 	ApiWrap &api() {
 		return *_api;
@@ -205,11 +295,23 @@ public:
 	void checkAutoLock();
 	void checkAutoLockIn(TimeMs time);
 
+	rpl::lifetime &lifetime() {
+		return _lifetime;
+	}
+
+	base::Observable<DocumentData*> documentUpdated;
+	base::Observable<std::pair<not_null<HistoryItem*>, MsgId>> messageIdChanging;
+
+	bool supportMode() const;
+	not_null<Support::Templates*> supportTemplates() const;
+
 	~AuthSession();
 
 private:
-	const UserId _userId = 0;
-	AuthSessionData _data;
+	static constexpr auto kDefaultSaveDelay = TimeMs(1000);
+
+	const not_null<UserData*> _user;
+	AuthSessionSettings _settings;
 	base::Timer _saveDataTimer;
 
 	TimeMs _shouldLockAt = 0;
@@ -218,6 +320,18 @@ private:
 	const std::unique_ptr<ApiWrap> _api;
 	const std::unique_ptr<Calls::Instance> _calls;
 	const std::unique_ptr<Storage::Downloader> _downloader;
+	const std::unique_ptr<Storage::Uploader> _uploader;
+	const std::unique_ptr<Storage::Facade> _storage;
 	const std::unique_ptr<Window::Notifications::System> _notifications;
+
+	// _data depends on _downloader / _uploader, including destructor.
+	const std::unique_ptr<Data::Session> _data;
+
+	// _changelogs depends on _data, subscribes on chats loading event.
+	const std::unique_ptr<Core::Changelogs> _changelogs;
+
+	const std::unique_ptr<Support::Templates> _supportTemplates;
+
+	rpl::lifetime _lifetime;
 
 };
